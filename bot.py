@@ -21,12 +21,11 @@ QUESTIONS_FILE = 'questions.json'
 STATS_FILE = 'user_stats.json'
 IMAGES_DIR = 'images/'
 
-EXAM_TIME_SECONDS = 20 * 60  # 20 Minutes
 EXAM_QUESTION_COUNT = 30
 PASSING_SCORE = 26
 
 # ---------------------------------------------------------
-# Data Helpers (JSON Persistent Storage)
+# Data Helpers
 # ---------------------------------------------------------
 def load_questions():
     if os.path.exists(QUESTIONS_FILE):
@@ -61,7 +60,7 @@ def update_user_stats(user_id, passed: bool):
 questions_data = load_questions()
 
 # ---------------------------------------------------------
-# Vector-Based Number Drawing (Font-Independent Grid Options)
+# Vector-Based Number Drawing
 # ---------------------------------------------------------
 def draw_digit_vector(draw, digit, left, top, size=30, color=(0, 0, 0), stroke=4):
     l, t, w, h = left, top, size, size
@@ -104,11 +103,8 @@ def create_2x2_grid(img1_path, img2_path, img3_path, img4_path):
         canvas.paste(img, pos)
         draw = ImageDraw.Draw(canvas)
         
-        # Badge Background
         bx, by = pos[0] + 8, pos[1] + 8
         draw.rectangle([bx, by, bx + badge_size, by + badge_size], fill=(255, 255, 255), outline=(0, 0, 0), width=2)
-        
-        # Draw Vector Number
         draw_digit_vector(draw, str(idx + 1), bx + 7, by + 5, size=20, color=(0, 0, 0), stroke=3)
 
     img_byte_arr = io.BytesIO()
@@ -117,7 +113,7 @@ def create_2x2_grid(img1_path, img2_path, img3_path, img4_path):
     return img_byte_arr
 
 # ---------------------------------------------------------
-# Bot UI & Keyboard Setup
+# Bot UI & Commands
 # ---------------------------------------------------------
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [['شروع آزمون آیین‌نامه 🚗'], ['آمار من 📊']],
@@ -133,7 +129,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == 'شروع آزمون آیین‌نامه 🚗':
-        await start_exam(update, context)
+        await show_exam_list(update, context)
     elif text == 'آمار من 📊':
         await show_stats(update, context)
 
@@ -150,23 +146,48 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 # ---------------------------------------------------------
-# Exam Logic
+# Exam Selection & Execution
 # ---------------------------------------------------------
-async def start_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(questions_data) < EXAM_QUESTION_COUNT:
-        selected_questions = questions_data.copy()
-        random.shuffle(selected_questions)
-    else:
-        selected_questions = random.sample(questions_data, EXAM_QUESTION_COUNT)
+async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not questions_data:
+        await update.message.reply_text("خطا: هیچ سوالی در فایل questions.json یافت نشد!")
+        return
+
+    # ایجاد دکمه‌های آزمون ۱ تا ۱۷ (در ردیف‌های ۳ تایی)
+    keyboard = []
+    row = []
+    for i in range(1, 18):
+        row.append(InlineKeyboardButton(f"آزمون {i}", callback_data=f"select_exam_{i}"))
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("لطفاً شماره آزمون مورد نظر خود را انتخاب کنید:", reply_markup=reply_markup)
+
+async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    exam_num = int(query.data.split('_')[2])
+    
+    # فیلتر کردن سوالات مربوط به شماره آزمون انتخابی
+    exam_questions = [q for q in questions_data if q.get('exam_number') == exam_num]
+
+    if not exam_questions:
+        await query.edit_message_text(f"سوالاتی برای آزمون شماره {exam_num} یافت نشد.")
+        return
 
     context.user_data['exam'] = {
-        'questions': selected_questions,
+        'questions': exam_questions,
         'current_index': 0,
         'correct_count': 0,
         'wrong_count': 0,
     }
 
-    await update.message.reply_text("آزمون ۳۰ سوالی شما شروع شد! ۲۰ دقیقه زمان دارید.")
+    await query.edit_message_text(f"آزمون شماره {exam_num} شروع شد! ۲۰ دقیقه زمان دارید.")
     await send_next_question(update, context)
 
 async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -194,7 +215,6 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Check if question requires 2x2 grid image
     exam_num = q.get('exam_number')
     q_num = q.get('question_number')
     
@@ -278,6 +298,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(handle_exam_selection, pattern="^select_exam_"))
     app.add_handler(CallbackQueryHandler(handle_answer, pattern="^ans_"))
 
     print("Bot is running...")

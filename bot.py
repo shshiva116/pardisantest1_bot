@@ -24,6 +24,12 @@ IMAGES_DIR = 'images/'
 EXAM_QUESTION_COUNT = 30
 PASSING_SCORE = 26
 
+# تبدیل اعداد انگلیسی به فارسی برای خواندن کلیدهای فایل JSON
+PERSIAN_DIGITS = {'1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹', '0': '۰'}
+
+def to_persian_num(num):
+    return ''.join(PERSIAN_DIGITS.get(char, char) for char in str(num))
+
 # ---------------------------------------------------------
 # Data Helpers
 # ---------------------------------------------------------
@@ -31,7 +37,7 @@ def load_questions():
     if os.path.exists(QUESTIONS_FILE):
         with open(QUESTIONS_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
-    return []
+    return {}
 
 def load_stats():
     if os.path.exists(STATS_FILE):
@@ -56,8 +62,6 @@ def update_user_stats(user_id, passed: bool):
         stats[str_id]["failed"] += 1
     
     save_stats(stats)
-
-questions_data = load_questions()
 
 # ---------------------------------------------------------
 # Vector-Based Number Drawing
@@ -149,11 +153,10 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Exam Selection & Execution
 # ---------------------------------------------------------
 async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global questions_data
-    questions_data = load_questions()  # بارگذاری مجدد فایل جهت اطمینان
+    questions_data = load_questions()
     
     if not questions_data:
-        await update.message.reply_text("خطا: هیچ سوالی در فایل questions.json یافت نشد!")
+        await update.message.reply_text("خطا: هیچ دیتایی در فایل questions.json یافت نشد!")
         return
 
     keyboard = []
@@ -174,15 +177,22 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
 
     exam_num = int(query.data.split('_')[2])
-    
-    # فیلتر بر اساس exam_number (مطمئن شویم نوع داده یکسان بررسی می‌شود)
-    exam_questions = [q for q in questions_data if int(q.get('exam_number', 0)) == exam_num]
+    persian_exam_num = to_persian_num(exam_num)
+    exam_key = f"آزمون {persian_exam_num}"
+
+    questions_data = load_questions()
+    exam_questions = questions_data.get(exam_key, [])
+
+    # اگر کلید فارسی پیدا نشد، کلید انگلیسی را هم بررسی می‌کنیم
+    if not exam_questions:
+        exam_questions = questions_data.get(f"آزمون {exam_num}", [])
 
     if not exam_questions:
-        await query.answer(f"سوالاتی برای آزمون {exam_num} یافت نشد!", show_alert=True)
+        await query.answer(f"سوالاتی برای {exam_key} یافت نشد!", show_alert=True)
         return
 
     context.user_data['exam'] = {
+        'exam_num': exam_num,
         'questions': exam_questions,
         'current_index': 0,
         'correct_count': 0,
@@ -196,7 +206,7 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=f"🚗 **آزمون شماره {exam_num} شروع شد.**\nموفق باشید!",
+        text=f"🚗 **{exam_key} شروع شد.**\nموفق باشید!",
         parse_mode='Markdown'
     )
     await send_next_question(update, context)
@@ -212,8 +222,15 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     q = exam['questions'][idx]
-    q_text = f"سوال {idx + 1} از {len(exam['questions'])}:\n\n{q['question']}"
     
+    # پشتیبانی از متون سوال و گزینه‌ها
+    q_text_content = q.get('question', '')
+    options = q.get('options', [])
+    
+    q_text = f"سوال {idx + 1} از {len(exam['questions'])}:\n\n{q_text_content}"
+    if options and any(options):
+        q_text += "\n\n" + "\n".join([f"{i+1}. {opt}" for i, opt in enumerate(options) if opt])
+
     keyboard = [
         [
             InlineKeyboardButton("گزینه ۱", callback_data="ans_1"),
@@ -226,8 +243,8 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    exam_num = q.get('exam_number')
-    q_num = q.get('question_number')
+    exam_num = exam['exam_num']
+    q_num = idx + 1
     
     grid_img_paths = [os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}_{i}.jpg") for i in range(1, 5)]
     has_grid = all(os.path.exists(p) for p in grid_img_paths)
@@ -262,7 +279,8 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = exam['questions'][idx]
     
     selected_option = int(query.data.split('_')[1])
-    correct_option = int(q['correct_option'])
+    # پشتیبانی از کلیدهای مختلف جواب درست (correct_option یا answer)
+    correct_option = int(q.get('correct_option', q.get('answer', 1)))
 
     if selected_option == correct_option:
         exam['correct_count'] += 1

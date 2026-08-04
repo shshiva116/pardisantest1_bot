@@ -24,7 +24,6 @@ IMAGES_DIR = 'images/'
 EXAM_QUESTION_COUNT = 30
 PASSING_SCORE = 26
 
-# تبدیل اعداد انگلیسی به فارسی برای خواندن کلیدهای فایل JSON
 PERSIAN_DIGITS = {'1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹', '0': '۰'}
 
 def to_persian_num(num):
@@ -183,7 +182,6 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
     questions_data = load_questions()
     exam_questions = questions_data.get(exam_key, [])
 
-    # اگر کلید فارسی پیدا نشد، کلید انگلیسی را هم بررسی می‌کنیم
     if not exam_questions:
         exam_questions = questions_data.get(f"آزمون {exam_num}", [])
 
@@ -223,13 +221,18 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     q = exam['questions'][idx]
     
-    # پشتیبانی از متون سوال و گزینه‌ها
-    q_text_content = q.get('question', '')
+    q_text_content = q.get('question', '').strip()
+    if not q_text_content:
+        q_text_content = f"سوال شماره {idx + 1}"
+
     options = q.get('options', [])
     
-    q_text = f"سوال {idx + 1} از {len(exam['questions'])}:\n\n{q_text_content}"
-    if options and any(options):
-        q_text += "\n\n" + "\n".join([f"{i+1}. {opt}" for i, opt in enumerate(options) if opt])
+    q_text = f"❓ **سوال {idx + 1} از {len(exam['questions'])}:**\n\n{q_text_content}"
+    
+    # اضافه کردن متون گزینه در صورت وجود
+    formatted_options = [f"{i+1}. {opt}" for i, opt in enumerate(options) if str(opt).strip()]
+    if formatted_options:
+        q_text += "\n\n" + "\n".join(formatted_options)
 
     keyboard = [
         [
@@ -246,6 +249,7 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     exam_num = exam['exam_num']
     q_num = idx + 1
     
+    # بررسی فرمت عکس‌ها
     grid_img_paths = [os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}_{i}.jpg") for i in range(1, 5)]
     has_grid = all(os.path.exists(p) for p in grid_img_paths)
 
@@ -257,13 +261,15 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
             chat_id=chat_id,
             photo=grid_bytes,
             caption=q_text,
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
         )
     else:
         await context.bot.send_message(
             chat_id=chat_id,
             text=q_text,
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
         )
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -279,7 +285,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = exam['questions'][idx]
     
     selected_option = int(query.data.split('_')[1])
-    # پشتیبانی از کلیدهای مختلف جواب درست (correct_option یا answer)
     correct_option = int(q.get('correct_option', q.get('answer', 1)))
 
     if selected_option == correct_option:

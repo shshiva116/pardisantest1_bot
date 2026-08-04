@@ -21,19 +21,11 @@ QUESTIONS_FILE = 'questions.json'
 STATS_FILE = 'user_stats.json'
 IMAGES_DIR = 'images/'
 
-<<<<<<< HEAD
-=======
-EXAM_TIME_SECONDS = 20 * 60  # 20 Minutes
->>>>>>> d33517ee3a616a64c3df27aa15cee7aec0fcbdaf
 EXAM_QUESTION_COUNT = 30
 PASSING_SCORE = 26
 
 # ---------------------------------------------------------
-<<<<<<< HEAD
 # Data Helpers
-=======
-# Data Helpers (JSON Persistent Storage)
->>>>>>> d33517ee3a616a64c3df27aa15cee7aec0fcbdaf
 # ---------------------------------------------------------
 def load_questions():
     if os.path.exists(QUESTIONS_FILE):
@@ -68,11 +60,7 @@ def update_user_stats(user_id, passed: bool):
 questions_data = load_questions()
 
 # ---------------------------------------------------------
-<<<<<<< HEAD
 # Vector-Based Number Drawing
-=======
-# Vector-Based Number Drawing (Font-Independent Grid Options)
->>>>>>> d33517ee3a616a64c3df27aa15cee7aec0fcbdaf
 # ---------------------------------------------------------
 def draw_digit_vector(draw, digit, left, top, size=30, color=(0, 0, 0), stroke=4):
     l, t, w, h = left, top, size, size
@@ -115,7 +103,6 @@ def create_2x2_grid(img1_path, img2_path, img3_path, img4_path):
         canvas.paste(img, pos)
         draw = ImageDraw.Draw(canvas)
         
-<<<<<<< HEAD
         bx, by = pos[0] + 8, pos[1] + 8
         draw.rectangle([bx, by, bx + badge_size, by + badge_size], fill=(255, 255, 255), outline=(0, 0, 0), width=2)
         draw_digit_vector(draw, str(idx + 1), bx + 7, by + 5, size=20, color=(0, 0, 0), stroke=3)
@@ -166,7 +153,6 @@ async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("خطا: هیچ سوالی در فایل questions.json یافت نشد!")
         return
 
-    # ایجاد دکمه‌های آزمون ۱ تا ۱۷ (در ردیف‌های ۳ تایی)
     keyboard = []
     row = []
     for i in range(1, 18):
@@ -186,7 +172,6 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
     exam_num = int(query.data.split('_')[2])
     
-    # فیلتر کردن سوالات مربوط به شماره آزمون انتخابی
     exam_questions = [q for q in questions_data if q.get('exam_number') == exam_num]
 
     if not exam_questions:
@@ -263,134 +248,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     idx = exam['current_index']
     q = exam['questions'][idx]
     
-=======
-        # Badge Background
-        bx, by = pos[0] + 8, pos[1] + 8
-        draw.rectangle([bx, by, bx + badge_size, by + badge_size], fill=(255, 255, 255), outline=(0, 0, 0), width=2)
-        
-        # Draw Vector Number
-        draw_digit_vector(draw, str(idx + 1), bx + 7, by + 5, size=20, color=(0, 0, 0), stroke=3)
-
-    img_byte_arr = io.BytesIO()
-    canvas.save(img_byte_arr, format='JPEG', quality=95)
-    img_byte_arr.seek(0)
-    return img_byte_arr
-
-# ---------------------------------------------------------
-# Bot UI & Keyboard Setup
-# ---------------------------------------------------------
-MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [['شروع آزمون آیین‌نامه 🚗'], ['آمار من 📊']],
-    resize_keyboard=True
-)
-
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "به ربات آزمون آیین‌نامه خوش آمدید!\nبرای شروع آزمون یا مشاهده آمار از دکمه‌های زیر استفاده کنید.",
-        reply_markup=MAIN_KEYBOARD
-    )
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if text == 'شروع آزمون آیین‌نامه 🚗':
-        await start_exam(update, context)
-    elif text == 'آمار من 📊':
-        await show_stats(update, context)
-
-async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    stats = load_stats().get(user_id, {"total": 0, "passed": 0, "failed": 0})
-    
-    msg = (
-        f"📊 **آمار کارنامه شما:**\n\n"
-        f"تعداد کل آزمون‌ها: {stats['total']}\n"
-        f"تعداد قبول شده: {stats['passed']} ✅\n"
-        f"تعداد مردود شده: {stats['failed']} ❌"
-    )
-    await update.message.reply_text(msg, parse_mode='Markdown')
-
-# ---------------------------------------------------------
-# Exam Logic
-# ---------------------------------------------------------
-async def start_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(questions_data) < EXAM_QUESTION_COUNT:
-        selected_questions = questions_data.copy()
-        random.shuffle(selected_questions)
-    else:
-        selected_questions = random.sample(questions_data, EXAM_QUESTION_COUNT)
-
-    context.user_data['exam'] = {
-        'questions': selected_questions,
-        'current_index': 0,
-        'correct_count': 0,
-        'wrong_count': 0,
-    }
-
-    await update.message.reply_text("آزمون ۳۰ سوالی شما شروع شد! ۲۰ دقیقه زمان دارید.")
-    await send_next_question(update, context)
-
-async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    exam = context.user_data.get('exam')
-    if not exam:
-        return
-
-    idx = exam['current_index']
-    if idx >= len(exam['questions']):
-        await finish_exam(update, context)
-        return
-
-    q = exam['questions'][idx]
-    q_text = f"سوال {idx + 1} از {len(exam['questions'])}:\n\n{q['question']}"
-    
-    keyboard = [
-        [
-            InlineKeyboardButton("گزینه ۱", callback_data="ans_1"),
-            InlineKeyboardButton("گزینه ۲", callback_data="ans_2"),
-        ],
-        [
-            InlineKeyboardButton("گزینه ۳", callback_data="ans_3"),
-            InlineKeyboardButton("گزینه ۴", callback_data="ans_4"),
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    # Check if question requires 2x2 grid image
-    exam_num = q.get('exam_number')
-    q_num = q.get('question_number')
-    
-    grid_img_paths = [os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}_{i}.jpg") for i in range(1, 5)]
-    has_grid = all(os.path.exists(p) for p in grid_img_paths)
-
-    chat_id = update.effective_chat.id
-
-    if has_grid:
-        grid_bytes = create_2x2_grid(*grid_img_paths)
-        await context.bot.send_photo(
-            chat_id=chat_id,
-            photo=grid_bytes,
-            caption=q_text,
-            reply_markup=reply_markup
-        )
-    else:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=q_text,
-            reply_markup=reply_markup
-        )
-
-async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    exam = context.user_data.get('exam')
-    if not exam:
-        await query.edit_message_text("آزمون فعال یافت نشد. لطفا آزمون جدیدی شروع کنید.")
-        return
-
-    idx = exam['current_index']
-    q = exam['questions'][idx]
-    
->>>>>>> d33517ee3a616a64c3df27aa15cee7aec0fcbdaf
     selected_option = int(query.data.split('_')[1])
     correct_option = q['correct_option']
 
@@ -439,10 +296,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-<<<<<<< HEAD
     app.add_handler(CallbackQueryHandler(handle_exam_selection, pattern="^select_exam_"))
-=======
->>>>>>> d33517ee3a616a64c3df27aa15cee7aec0fcbdaf
     app.add_handler(CallbackQueryHandler(handle_answer, pattern="^ans_"))
 
     print("Bot is running...")

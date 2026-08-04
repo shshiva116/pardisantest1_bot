@@ -149,6 +149,9 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Exam Selection & Execution
 # ---------------------------------------------------------
 async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global questions_data
+    questions_data = load_questions()  # بارگذاری مجدد فایل جهت اطمینان
+    
     if not questions_data:
         await update.message.reply_text("خطا: هیچ سوالی در فایل questions.json یافت نشد!")
         return
@@ -172,10 +175,11 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
     exam_num = int(query.data.split('_')[2])
     
-    exam_questions = [q for q in questions_data if q.get('exam_number') == exam_num]
+    # فیلتر بر اساس exam_number (مطمئن شویم نوع داده یکسان بررسی می‌شود)
+    exam_questions = [q for q in questions_data if int(q.get('exam_number', 0)) == exam_num]
 
     if not exam_questions:
-        await query.edit_message_text(f"سوالاتی برای آزمون شماره {exam_num} یافت نشد.")
+        await query.answer(f"سوالاتی برای آزمون {exam_num} یافت نشد!", show_alert=True)
         return
 
     context.user_data['exam'] = {
@@ -185,7 +189,16 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
         'wrong_count': 0,
     }
 
-    await query.edit_message_text(f"آزمون شماره {exam_num} شروع شد! ۲۰ دقیقه زمان دارید.")
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"🚗 **آزمون شماره {exam_num} شروع شد.**\nموفق باشید!",
+        parse_mode='Markdown'
+    )
     await send_next_question(update, context)
 
 async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -249,7 +262,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = exam['questions'][idx]
     
     selected_option = int(query.data.split('_')[1])
-    correct_option = q['correct_option']
+    correct_option = int(q['correct_option'])
 
     if selected_option == correct_option:
         exam['correct_count'] += 1
@@ -257,7 +270,12 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         exam['wrong_count'] += 1
 
     exam['current_index'] += 1
-    await query.delete_message()
+    
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
+
     await send_next_question(update, context)
 
 async def finish_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):

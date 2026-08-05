@@ -1,6 +1,5 @@
 import os
 import json
-import random
 import io
 from PIL import Image, ImageDraw
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
@@ -20,26 +19,23 @@ TOKEN = os.environ.get('TOKEN')
 QUESTIONS_FILE = 'questions.json'
 STATS_FILE = 'user_stats.json'
 IMAGES_DIR = 'images/'
-
 PASSING_SCORE = 26
 
-PERSIAN_DIGITS = {'1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹', '0': '۰'}
-
-def to_persian_num(num):
-    return ''.join(PERSIAN_DIGITS.get(char, char) for char in str(num))
+# آیدی تلگرام شما جهت دریافت خطاهای ربات
+ADMIN_CHAT_ID = 67943468 
 
 # ---------------------------------------------------------
 # Data Helpers
 # ---------------------------------------------------------
 def load_questions():
-    if os.path.exists(QUESTIONS_FILE):
-        try:
-            with open(QUESTIONS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Error loading questions.json: {e}")
-            return None
-    return {}
+    if not os.path.exists(QUESTIONS_FILE):
+        return None, f"فایل {QUESTIONS_FILE} پیدا نشد!"
+    try:
+        with open(QUESTIONS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data, None
+    except Exception as e:
+        return None, f"خطا در ساختار فایل JSON: {str(e)}"
 
 def load_stats():
     if os.path.exists(STATS_FILE):
@@ -69,7 +65,7 @@ def update_user_stats(user_id, passed: bool):
     save_stats(stats)
 
 # ---------------------------------------------------------
-# Vector-Based Number Drawing
+# Vector-Based Number Drawing (2x2 Grid)
 # ---------------------------------------------------------
 def draw_digit_vector(draw, digit, left, top, size=30, color=(0, 0, 0), stroke=4):
     l, t, w, h = left, top, size, size
@@ -122,7 +118,7 @@ def create_2x2_grid(img1_path, img2_path, img3_path, img4_path):
     return img_byte_arr
 
 # ---------------------------------------------------------
-# Bot UI & Commands
+# UI & Handlers
 # ---------------------------------------------------------
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [['شروع آزمون آیین‌نامه 🚗'], ['آمار من 📊']],
@@ -154,17 +150,11 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode='Markdown')
 
-# ---------------------------------------------------------
-# Exam Selection & Execution
-# ---------------------------------------------------------
 async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    questions_data = load_questions()
+    questions_data, error_err = load_questions()
     
-    if questions_data is None:
-        await update.message.reply_text("❌ خطا: ساختار فایل questions.json دارای اشکال است.")
-        return
-    if not questions_data:
-        await update.message.reply_text("❌ خطا: فایل questions.json خالی است!")
+    if error_err:
+        await update.message.reply_text(f"❌ **خطا:**\n{error_err}", parse_mode='Markdown')
         return
 
     keyboard = []
@@ -185,21 +175,23 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
 
     exam_num = int(query.data.split('_')[2])
-    persian_exam_num = to_persian_num(exam_num)
+    questions_data, error_err = load_questions()
 
-    questions_data = load_questions()
-    if questions_data is None:
-        await query.answer("خطا در خواندن سوالات! فایل JSON فرمت اشتباهی دارد.", show_alert=True)
+    if error_err:
+        await query.message.reply_text(f"❌ خطا: {error_err}")
         return
 
-    # چک کردن کلیدها هم با عدد فارسی و هم با عدد انگلیسی
-    key_persian = f"آزمون {persian_exam_num}"
-    key_english = f"آزمون {exam_num}"
-
-    exam_questions = questions_data.get(key_english) or questions_data.get(key_persian) or []
+    # چک کردن کلیدهای فایل JSON (عدد انگلیسی)
+    key = f"آزمون {exam_num}"
+    exam_questions = questions_data.get(key)
 
     if not exam_questions:
-        await query.answer(f"سوالاتی برای کلید '{key_english}' یا '{key_persian}' یافت نشد!", show_alert=True)
+        available_keys = list(questions_data.keys())[:3]
+        await query.message.reply_text(
+            f"❌ کلید `{key}` در فایل پیدا نشد!\n\n"
+            f"نمونه کلیدهای موجود در فایل شما:\n{available_keys}",
+            parse_mode='Markdown'
+        )
         return
 
     context.user_data['exam'] = {
@@ -226,8 +218,6 @@ async def find_image_path(exam_num, q_num, opt_num):
     candidates = [
         os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}_opt{opt_num}.jpg"),
         os.path.join(IMAGES_DIR, f"E{exam_num}_q{q_num}_opt{opt_num}.jpg"),
-        os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}_{opt_num}.jpg"),
-        os.path.join(IMAGES_DIR, f"E{exam_num}_q{q_num}_{opt_num}.jpg"),
     ]
     for path in candidates:
         if os.path.exists(path):
@@ -245,11 +235,7 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     q = exam['questions'][idx]
-    
-    q_text_content = q.get('question', '').strip()
-    if not q_text_content:
-        q_text_content = f"سوال شماره {idx + 1}"
-
+    q_text_content = q.get('question', f"سوال شماره {idx + 1}").strip()
     options = q.get('options', [])
     
     q_text = f"❓ **سوال {idx + 1} از {len(exam['questions'])}:**\n\n{q_text_content}"
@@ -269,42 +255,16 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
-    exam_num = exam['exam_num']
-    q_num = idx + 1
-    
-    paths = []
-    for i in range(1, 5):
-        p = await find_image_path(exam_num, q_num, i)
-        if p:
-            paths.append(p)
-
-    has_grid = (len(paths) == 4)
     chat_id = update.effective_chat.id
 
-    try:
-        if has_grid:
-            grid_bytes = create_2x2_grid(paths[0], paths[1], paths[2], paths[3])
-            await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=grid_bytes,
-                caption=q_text,
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=q_text,
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
-    except Exception as e:
-        print(f"Error sending question: {e}")
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"❌ خطا در ارسال سوال شماره {q_num}: {e}"
-        )
+    paths = [await find_image_path(exam['exam_num'], idx + 1, i) for i in range(1, 5)]
+    paths = [p for p in paths if p is not None]
+
+    if len(paths) == 4:
+        grid_bytes = create_2x2_grid(paths[0], paths[1], paths[2], paths[3])
+        await context.bot.send_photo(chat_id=chat_id, photo=grid_bytes, caption=q_text, reply_markup=reply_markup, parse_mode='Markdown')
+    else:
+        await context.bot.send_message(chat_id=chat_id, text=q_text, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -312,7 +272,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     exam = context.user_data.get('exam')
     if not exam:
-        await query.edit_message_text("آزمون فعال یافت نشد. لطفا آزمون جدیدی شروع کنید.")
         return
 
     idx = exam['current_index']
@@ -348,17 +307,26 @@ async def finish_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🏁 **پایان آزمون**\n\n"
         f"نتیجه: **{status_str}**\n"
         f"تعداد پاسخ‌های درست: {correct}\n"
-        f"تعداد پاسخ‌های نادرست: {wrong}\n"
-        f"حداقل نمره قبولی: {PASSING_SCORE}"
+        f"تعداد پاسخ‌های نادرست: {wrong}"
     )
 
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=result_text,
-        parse_mode='Markdown',
-        reply_markup=MAIN_KEYBOARD
-    )
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=result_text, parse_mode='Markdown', reply_markup=MAIN_KEYBOARD)
     context.user_data['exam'] = None
+
+# ---------------------------------------------------------
+# Error Handler (ارسال مستقیم خطا به تلگرام)
+# ---------------------------------------------------------
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    print(f"Exception while handling an update: {context.error}")
+    if ADMIN_CHAT_ID:
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=f"⚠️ **خطای ربات:**\n\n`{context.error}`",
+                parse_mode='Markdown'
+            )
+        except Exception:
+            pass
 
 # ---------------------------------------------------------
 # Main Execution
@@ -373,6 +341,9 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(handle_exam_selection, pattern="^select_exam_"))
     app.add_handler(CallbackQueryHandler(handle_answer, pattern="^ans_"))
+
+    # ثبت لایه گزارش خطا
+    app.add_error_handler(error_handler)
 
     print("Bot is running...")
     app.run_polling()

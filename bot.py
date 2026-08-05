@@ -21,7 +21,6 @@ QUESTIONS_FILE = 'questions.json'
 STATS_FILE = 'user_stats.json'
 IMAGES_DIR = 'images/'
 
-EXAM_QUESTION_COUNT = 30
 PASSING_SCORE = 26
 
 PERSIAN_DIGITS = {'1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹', '0': '۰'}
@@ -34,14 +33,21 @@ def to_persian_num(num):
 # ---------------------------------------------------------
 def load_questions():
     if os.path.exists(QUESTIONS_FILE):
-        with open(QUESTIONS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(QUESTIONS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading questions.json: {e}")
+            return None
     return {}
 
 def load_stats():
     if os.path.exists(STATS_FILE):
-        with open(STATS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(STATS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
     return {}
 
 def save_stats(stats):
@@ -154,8 +160,11 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     questions_data = load_questions()
     
+    if questions_data is None:
+        await update.message.reply_text("❌ خطا: ساختار فایل questions.json دارای اشکال است.")
+        return
     if not questions_data:
-        await update.message.reply_text("خطا: هیچ دیتایی در فایل questions.json یافت نشد!")
+        await update.message.reply_text("❌ خطا: فایل questions.json خالی است!")
         return
 
     keyboard = []
@@ -177,16 +186,20 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
     exam_num = int(query.data.split('_')[2])
     persian_exam_num = to_persian_num(exam_num)
-    exam_key = f"آزمون {persian_exam_num}"
 
     questions_data = load_questions()
-    exam_questions = questions_data.get(exam_key, [])
+    if questions_data is None:
+        await query.answer("خطا در خواندن سوالات! فایل JSON فرمت اشتباهی دارد.", show_alert=True)
+        return
+
+    # چک کردن کلیدها هم با عدد فارسی و هم با عدد انگلیسی
+    key_persian = f"آزمون {persian_exam_num}"
+    key_english = f"آزمون {exam_num}"
+
+    exam_questions = questions_data.get(key_english) or questions_data.get(key_persian) or []
 
     if not exam_questions:
-        exam_questions = questions_data.get(f"آزمون {exam_num}", [])
-
-    if not exam_questions:
-        await query.answer(f"سوالاتی برای {exam_key} یافت نشد!", show_alert=True)
+        await query.answer(f"سوالاتی برای کلید '{key_english}' یا '{key_persian}' یافت نشد!", show_alert=True)
         return
 
     context.user_data['exam'] = {
@@ -204,10 +217,22 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=f"🚗 **{exam_key} شروع شد.**\nموفق باشید!",
+        text=f"🚗 **آزمون {exam_num} شروع شد.**\nتعداد سوالات: {len(exam_questions)}\nموفق باشید!",
         parse_mode='Markdown'
     )
     await send_next_question(update, context)
+
+async def find_image_path(exam_num, q_num, opt_num):
+    candidates = [
+        os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}_opt{opt_num}.jpg"),
+        os.path.join(IMAGES_DIR, f"E{exam_num}_q{q_num}_opt{opt_num}.jpg"),
+        os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}_{opt_num}.jpg"),
+        os.path.join(IMAGES_DIR, f"E{exam_num}_q{q_num}_{opt_num}.jpg"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
 
 async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     exam = context.user_data.get('exam')
@@ -229,7 +254,6 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     q_text = f"❓ **سوال {idx + 1} از {len(exam['questions'])}:**\n\n{q_text_content}"
     
-    # اضافه کردن متون گزینه در صورت وجود
     formatted_options = [f"{i+1}. {opt}" for i, opt in enumerate(options) if str(opt).strip()]
     if formatted_options:
         q_text += "\n\n" + "\n".join(formatted_options)
@@ -249,27 +273,37 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     exam_num = exam['exam_num']
     q_num = idx + 1
     
-    # بررسی فرمت عکس‌ها
-    grid_img_paths = [os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}_{i}.jpg") for i in range(1, 5)]
-    has_grid = all(os.path.exists(p) for p in grid_img_paths)
+    paths = []
+    for i in range(1, 5):
+        p = await find_image_path(exam_num, q_num, i)
+        if p:
+            paths.append(p)
 
+    has_grid = (len(paths) == 4)
     chat_id = update.effective_chat.id
 
-    if has_grid:
-        grid_bytes = create_2x2_grid(*grid_img_paths)
-        await context.bot.send_photo(
-            chat_id=chat_id,
-            photo=grid_bytes,
-            caption=q_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-    else:
+    try:
+        if has_grid:
+            grid_bytes = create_2x2_grid(paths[0], paths[1], paths[2], paths[3])
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=grid_bytes,
+                caption=q_text,
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=q_text,
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+    except Exception as e:
+        print(f"Error sending question: {e}")
         await context.bot.send_message(
             chat_id=chat_id,
-            text=q_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
+            text=f"❌ خطا در ارسال سوال شماره {q_num}: {e}"
         )
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -285,7 +319,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = exam['questions'][idx]
     
     selected_option = int(query.data.split('_')[1])
-    correct_option = int(q.get('correct_option', q.get('answer', 1)))
+    correct_option = int(q.get('correct_option', 1))
 
     if selected_option == correct_option:
         exam['correct_count'] += 1

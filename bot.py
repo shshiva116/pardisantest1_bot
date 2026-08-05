@@ -3,7 +3,6 @@ import json
 import io
 import asyncio
 import threading
-from flask import Flask
 from PIL import Image, ImageDraw
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -16,17 +15,23 @@ from telegram.ext import (
 )
 
 # ---------------------------------------------------------
-# سرور سبک Flask جهت پایداری در Render
+# سرور سبک Flask جهت پایداری در Render (با ساختار ایمن)
 # ---------------------------------------------------------
-app_web = Flask(__name__)
+try:
+    from flask import Flask
+    app_web = Flask(__name__)
 
-@app_web.route('/')
-def home():
-    return "Bot is running inline!"
+    @app_web.route('/')
+    def home():
+        return "Bot is running online!"
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app_web.run(host="0.0.0.0", port=port)
+    def run_flask():
+        port = int(os.environ.get("PORT", 8080))
+        app_web.run(host="0.0.0.0", port=port)
+    
+    flask_available = True
+except ImportError:
+    flask_available = False
 
 # ---------------------------------------------------------
 # تنظیمات اصلی ربات
@@ -39,7 +44,7 @@ PASSING_SCORE = 26
 EXAM_TIMEOUT_SECONDS = 20 * 60
 
 PERSIAN_DIGITS = {'1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹', '0': '۰'}
-RLM = "\u200f"  # Right-to-Left Mark جهت تنظیم راست‌چینی متون
+RLM = "\u200f"  # کاراکتر راست‌چینی متون
 
 def to_persian_num(num):
     return ''.join(PERSIAN_DIGITS.get(char, char) for char in str(num))
@@ -52,7 +57,8 @@ def load_questions():
         try:
             with open(QUESTIONS_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except Exception:
+        except Exception as e:
+            print(f"Error loading questions: {e}")
             return {}
     return {}
 
@@ -66,8 +72,11 @@ def load_stats():
     return {}
 
 def save_stats(stats):
-    with open(STATS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(stats, f, ensure_ascii=False, indent=2)
+    try:
+        with open(STATS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(stats, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Error saving stats: {e}")
 
 def update_user_stats(user_id, passed: bool):
     stats = load_stats()
@@ -137,7 +146,7 @@ def create_2x2_grid(img1_path, img2_path, img3_path, img4_path):
     return img_byte_arr
 
 # ---------------------------------------------------------
-# جستجوی هوشمند تصاویر
+# جستجوی تصاویر
 # ---------------------------------------------------------
 async def find_question_image(exam_num, q_num):
     candidates = [
@@ -251,7 +260,10 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     if 'timer_task' in context.user_data and context.user_data['timer_task']:
-        context.user_data['timer_task'].cancel()
+        try:
+            context.user_data['timer_task'].cancel()
+        except Exception:
+            pass
 
     context.user_data['exam'] = {
         'exam_num': exam_num,
@@ -286,7 +298,7 @@ async def exam_timer(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         await finish_exam_by_chat_id(context, chat_id)
 
 # ---------------------------------------------------------
-# ارسال سوالات با چینش دقیق کلیدها و راست‌چینی
+# ارسال سوالات
 # ---------------------------------------------------------
 async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     exam = context.user_data.get('exam')
@@ -315,7 +327,6 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     q_text = f"{RLM}❓ **سوال {idx + 1} از {total_q}:**\n\n{RLM}{q_text_content}"
 
-    # اگر تصاویر ۴ گزینه‌ای وجود نداشت، گزینه‌های متنی نمایش داده می‌شوند
     if not opt_img_paths:
         formatted_options = [f"{RLM}{i+1}. {clean_option_text(opt)}" for i, opt in enumerate(options) if str(opt).strip()]
         if formatted_options:
@@ -323,7 +334,6 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     q_text += selected_str
 
-    # چینش استاندارد ۲ در ۲ برای پاسخ‌ها
     keyboard = [
         [
             InlineKeyboardButton("گزینه ۱", callback_data="ans_1"),
@@ -390,7 +400,7 @@ async def handle_answer_and_nav(update: Update, context: ContextTypes.DEFAULT_TY
     await send_next_question(update, context)
 
 # ---------------------------------------------------------
-# صدور مطمئن کارنامه پایانی
+# کارنامه
 # ---------------------------------------------------------
 async def finish_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
@@ -475,7 +485,7 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     )
 
 # ---------------------------------------------------------
-# مرور سوالات پس از پایان آزمون
+# مرور سوالات
 # ---------------------------------------------------------
 async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -567,9 +577,13 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
 # ---------------------------------------------------------
 def main():
     if not TOKEN:
-        raise ValueError("متغیر TOKEN تنظیم نشده است!")
+        raise ValueError("متغیر TOKEN در Environment Variables تعریف نشده است!")
 
-    threading.Thread(target=run_flask, daemon=True).start()
+    if flask_available:
+        try:
+            threading.Thread(target=run_flask, daemon=True).start()
+        except Exception as e:
+            print(f"Flask start warning: {e}")
 
     app = ApplicationBuilder().token(TOKEN).build()
 

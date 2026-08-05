@@ -3,6 +3,7 @@ import json
 import io
 from PIL import Image, ImageDraw
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.request import HTTPXRequest
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -20,7 +21,6 @@ QUESTIONS_FILE = 'questions.json'
 STATS_FILE = 'user_stats.json'
 IMAGES_DIR = 'images/'
 PASSING_SCORE = 26
-TOTAL_QUESTIONS = 30
 
 PERSIAN_DIGITS = {'1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹', '0': '۰'}
 
@@ -183,7 +183,6 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
     persian_exam_num = to_persian_num(exam_num)
     questions_data = load_questions()
 
-    # بررسی انواع فرمت کلید در فایل JSON
     key_eng = f"آزمون {exam_num}"
     key_per = f"آزمون {persian_exam_num}"
 
@@ -199,7 +198,6 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
         'current_index': 0,
         'correct_count': 0,
         'wrong_count': 0,
-        'unanswered_count': 0
     }
 
     try:
@@ -209,7 +207,7 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=f"🚗 **آزمون شماره {exam_num} شروع شد.**\nتعداد سوالات: {len(exam_questions)}\nزمان و فرصت خود را مدیریت کنید. موفق باشید!",
+        text=f"🚗 **آزمون شماره {exam_num} شروع شد.**\nتعداد سوالات: {len(exam_questions)}\nموفق باشید!",
         parse_mode='Markdown'
     )
     await send_next_question(update, context)
@@ -334,21 +332,30 @@ async def finish_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['exam'] = None
 
 # ---------------------------------------------------------
-# نقطه شروع برنامه
+# اجرا با تایم‌اوت بالا برای شبکه Railway
 # ---------------------------------------------------------
 def main():
     if not TOKEN:
-        raise ValueError("متغیر TOKEN در محیط سرور تنظیم نشده است!")
+        print("CRITICAL ERROR: TOKEN environment variable is missing!")
+        return
 
-    app = ApplicationBuilder().token(TOKEN).build()
+    # حل مشکل قطع اتصال شبکه تلگرام در سرورهای ابری
+    request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
+
+    app = (
+        ApplicationBuilder()
+        .token(TOKEN)
+        .request(request)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(handle_exam_selection, pattern="^select_exam_"))
     app.add_handler(CallbackQueryHandler(handle_answer, pattern="^ans_"))
 
-    print("Bot started successfully...")
-    app.run_polling()
+    print("Bot is up and polling...")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()

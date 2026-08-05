@@ -3,7 +3,6 @@ import json
 import io
 from PIL import Image, ImageDraw
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.request import HTTPXRequest
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -332,29 +331,20 @@ async def finish_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['exam'] = None
 
 # ---------------------------------------------------------
-# اجرا با تایم‌اوت بالا برای شبکه Railway
+# اجرای پروژه
 # ---------------------------------------------------------
 def main():
     if not TOKEN:
-        print("CRITICAL ERROR: TOKEN environment variable is missing!")
-        return
+        raise ValueError("متغیر TOKEN در محیط سرور تنظیم نشده است!")
 
-    # حل مشکل قطع اتصال شبکه تلگرام در سرورهای ابری
-    request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
-
-    app = (
-        ApplicationBuilder()
-        .token(TOKEN)
-        .request(request)
-        .build()
-    )
+    app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(handle_exam_selection, pattern="^select_exam_"))
     app.add_handler(CallbackQueryHandler(handle_answer, pattern="^ans_"))
 
-    print("Bot is up and polling...")
+    print("Bot starting...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':

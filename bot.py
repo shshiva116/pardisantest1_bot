@@ -1,6 +1,7 @@
 import os
 import json
 import io
+import asyncio
 from PIL import Image, ImageDraw
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -20,6 +21,7 @@ QUESTIONS_FILE = 'questions.json'
 STATS_FILE = 'user_stats.json'
 IMAGES_DIR = 'images/'
 PASSING_SCORE = 26
+EXAM_TIMEOUT_SECONDS = 20 * 60  # ۲۰ دقیقه زمان آزمون
 
 PERSIAN_DIGITS = {'1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹', '0': '۰'}
 
@@ -27,7 +29,7 @@ def to_persian_num(num):
     return ''.join(PERSIAN_DIGITS.get(char, char) for char in str(num))
 
 # ---------------------------------------------------------
-# مدیریت فایل‌ها و آمار
+# مدیریت داده‌ها
 # ---------------------------------------------------------
 def load_questions():
     if os.path.exists(QUESTIONS_FILE):
@@ -66,9 +68,9 @@ def update_user_stats(user_id, passed: bool):
     save_stats(stats)
 
 # ---------------------------------------------------------
-# ساخت شبکه تصویری ۲x۲
+# ساخت شبکه تصویری ۲x۲ (بزرگ‌تر شدن شماره‌ها)
 # ---------------------------------------------------------
-def draw_digit_vector(draw, digit, left, top, size=30, color=(0, 0, 0), stroke=4):
+def draw_digit_vector(draw, digit, left, top, size=60, color=(0, 0, 0), stroke=8):
     l, t, w, h = left, top, size, size
     r, b = l + w, t + h
     cx, cy = l + w / 2, t + h / 2
@@ -92,12 +94,12 @@ def create_2x2_grid(img1_path, img2_path, img3_path, img4_path):
 
     resized_imgs = [img.resize((target_w, target_h), Image.Resampling.LANCZOS) for img in imgs]
     
-    padding = 15
-    badge_size = 35
+    padding = 20
+    badge_size = 70  # بزرگتر شدن بَج شماره‌ها
     grid_w = target_w * 2 + padding * 3
     grid_h = target_h * 2 + padding * 3
 
-    canvas = Image.new("RGB", (grid_w, grid_h), (245, 245, 245))
+    canvas = Image.new("RGB", (grid_w, grid_h), (240, 240, 240))
     positions = [
         (padding, padding),
         (target_w + padding * 2, padding),
@@ -109,9 +111,9 @@ def create_2x2_grid(img1_path, img2_path, img3_path, img4_path):
         canvas.paste(img, pos)
         draw = ImageDraw.Draw(canvas)
         
-        bx, by = pos[0] + 8, pos[1] + 8
-        draw.rectangle([bx, by, bx + badge_size, by + badge_size], fill=(255, 255, 255), outline=(0, 0, 0), width=2)
-        draw_digit_vector(draw, str(idx + 1), bx + 7, by + 5, size=20, color=(0, 0, 0), stroke=3)
+        bx, by = pos[0] + 15, pos[1] + 15
+        draw.rectangle([bx, by, bx + badge_size, by + badge_size], fill=(255, 255, 255), outline=(0, 0, 0), width=4)
+        draw_digit_vector(draw, str(idx + 1), bx + 12, by + 10, size=45, color=(0, 0, 0), stroke=7)
 
     img_byte_arr = io.BytesIO()
     canvas.save(img_byte_arr, format='JPEG', quality=95)
@@ -119,7 +121,7 @@ def create_2x2_grid(img1_path, img2_path, img3_path, img4_path):
     return img_byte_arr
 
 # ---------------------------------------------------------
-# کیبورد اصلی و دستورات
+# کیبورد اصلی
 # ---------------------------------------------------------
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [['شروع آزمون آیین‌نامه 🚗'], ['آمار من 📊']],
@@ -152,12 +154,12 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 # ---------------------------------------------------------
-# منوی انتخاب آزمون و اجرای سوالات
+# انتخاب آزمون و شروع
 # ---------------------------------------------------------
 async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     questions_data = load_questions()
     if not questions_data:
-        await update.message.reply_text("❌ فایل سوالات (questions.json) بارگذاری نشد یا خالی است.")
+        await update.message.reply_text("❌ فایل سوالات (questions.json) بارگذاری نشد.")
         return
 
     keyboard = []
@@ -181,7 +183,6 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
     persian_exam_num = to_persian_num(exam_num)
     questions_data = load_questions()
 
-    # پوشش تمام کلیدهای احتمالی فایل JSON
     exam_questions = (
         questions_data.get(f"آزمون {exam_num}") or 
         questions_data.get(f"آزمون {persian_exam_num}") or
@@ -191,16 +192,26 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
     if not exam_questions:
-        await query.message.reply_text(f"❌ سوالات مربوط به آزمون {exam_num} در فایل questions.json یافت نشد.")
+        await query.message.reply_text(f"❌ سوالات مربوط به آزمون {exam_num} یافت نشد.")
         return
 
+    # لغو تایمر قبلی اگر وجود داشته باشد
+    if 'timer_task' in context.user_data and context.user_data['timer_task']:
+        context.user_data['timer_task'].cancel()
+
+    # ذخیره حالت آزمون
     context.user_data['exam'] = {
         'exam_num': exam_num,
         'questions': exam_questions,
         'current_index': 0,
-        'correct_count': 0,
-        'wrong_count': 0,
+        'user_answers': {},  # index -> selected_option
+        'active': True
     }
+
+    # ساخت Task برای تایمر ۲۰ دقیقه‌ای
+    chat_id = update.effective_chat.id
+    timer_task = asyncio.create_task(exam_timer(context, chat_id))
+    context.user_data['timer_task'] = timer_task
 
     try:
         await query.delete_message()
@@ -208,12 +219,22 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
         pass
 
     await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=f"🚗 **آزمون شماره {exam_num} شروع شد.**\nتعداد سوالات: {len(exam_questions)}\nموفق باشید!",
+        chat_id=chat_id,
+        text=f"🚗 **آزمون شماره {exam_num} شروع شد.**\n⏱ زمان آزمون: **۲۰ دقیقه**\nتعداد سوالات: {len(exam_questions)}\nموفق باشید!",
         parse_mode='Markdown'
     )
     await send_next_question(update, context)
 
+async def exam_timer(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    await asyncio.sleep(EXAM_TIMEOUT_SECONDS)
+    exam = context.user_data.get('exam')
+    if exam and exam.get('active'):
+        await context.bot.send_message(chat_id=chat_id, text="⏰ **زمان ۲۰ دقیقه‌ای آزمون به پایان رسید!**", parse_mode='Markdown')
+        await finish_exam_by_chat_id(context, chat_id)
+
+# ---------------------------------------------------------
+# ارسال سوالات
+# ---------------------------------------------------------
 async def find_image_path(exam_num, q_num, opt_num):
     candidates = [
         os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}_opt{opt_num}.jpg"),
@@ -225,9 +246,15 @@ async def find_image_path(exam_num, q_num, opt_num):
             return path
     return None
 
+def clean_option_text(opt):
+    text = str(opt).strip()
+    if text.lower().endswith(('.jpg', '.jpeg', '.png')):
+        return "تصویر گزینه"
+    return text
+
 async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     exam = context.user_data.get('exam')
-    if not exam:
+    if not exam or not exam.get('active'):
         return
 
     idx = exam['current_index']
@@ -241,7 +268,7 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     q_text = f"❓ **سوال {idx + 1} از {len(exam['questions'])}:**\n\n{q_text_content}"
     
-    formatted_options = [f"{i+1}. {opt}" for i, opt in enumerate(options) if str(opt).strip()]
+    formatted_options = [f"{i+1}. {clean_option_text(opt)}" for i, opt in enumerate(options) if str(opt).strip()]
     if formatted_options:
         q_text += "\n\n" + "\n".join(formatted_options)
 
@@ -253,10 +280,13 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
         [
             InlineKeyboardButton("گزینه ۳", callback_data="ans_3"),
             InlineKeyboardButton("گزینه ۴", callback_data="ans_4"),
+        ],
+        [
+            InlineKeyboardButton("🏁 پایان آزمون و مشاهده نتیجه", callback_data="finish_exam_now")
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    chat_id = update.effective_chat.id
+    chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
 
     exam_num = exam['exam_num']
     q_num = idx + 1
@@ -273,21 +303,19 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
+    if query.data == "finish_exam_now":
+        await finish_exam(update, context)
+        return
+
     exam = context.user_data.get('exam')
-    if not exam:
+    if not exam or not exam.get('active'):
         return
 
     idx = exam['current_index']
-    q = exam['questions'][idx]
-    
     selected_option = int(query.data.split('_')[1])
-    correct_option = int(q.get('correct_option', 1))
 
-    if selected_option == correct_option:
-        exam['correct_count'] += 1
-    else:
-        exam['wrong_count'] += 1
-
+    # ثبت پاسخ کاربر
+    exam['user_answers'][idx] = selected_option
     exam['current_index'] += 1
     
     try:
@@ -298,17 +326,61 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_next_question(update, context)
 
 # ---------------------------------------------------------
-# نمایش کارنامه پایانی
+# پایان آزمون و تولید کارنامه به همراه شبکه مرور سوالات
 # ---------------------------------------------------------
 async def finish_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
+    await finish_exam_by_chat_id(context, chat_id)
+
+async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     exam = context.user_data.get('exam')
-    correct = exam['correct_count']
-    wrong = exam['wrong_count']
-    total_q = len(exam['questions'])
-    unanswered = total_q - (correct + wrong)
+    if not exam or not exam.get('active'):
+        return
+
+    exam['active'] = False
+
+    # ابطال تایمر
+    if 'timer_task' in context.user_data and context.user_data['timer_task']:
+        context.user_data['timer_task'].cancel()
+
+    questions = exam['questions']
+    user_answers = exam['user_answers']
+
+    correct_count = 0
+    wrong_count = 0
+    unanswered_count = 0
+
+    grid_buttons = []
+    row = []
+
+    for idx, q in enumerate(questions):
+        correct_opt = int(q.get('correct_option', 1))
+        user_opt = user_answers.get(idx)
+
+        if user_opt is None:
+            unanswered_count += 1
+            btn_text = f"⬜️ {idx + 1}"
+        elif user_opt == correct_opt:
+            correct_count += 1
+            btn_text = f"🟩 {idx + 1}"
+        else:
+            wrong_count += 1
+            btn_text = f"🟥 {idx + 1}"
+
+        row.append(InlineKeyboardButton(btn_text, callback_data=f"review_q_{idx}"))
+        if len(row) == 5:
+            grid_buttons.append(row)
+            row = []
+
+    if row:
+        grid_buttons.append(row)
+
+    total_q = len(questions)
+    passed = correct_count >= PASSING_SCORE
     
-    passed = correct >= PASSING_SCORE
-    update_user_stats(update.effective_user.id, passed)
+    # ذخیره آمار کلی کاربر
+    user_id = chat_id
+    update_user_stats(user_id, passed)
 
     status_icon = "🎉" if passed else "❌"
     status_text = "قبول شدید" if passed else "مردود شدید"
@@ -317,24 +389,73 @@ async def finish_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📝 **کارنامه آزمون شماره {exam['exam_num']}**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"نتیجه آزمون: **{status_text}** {status_icon}\n\n"
-        f"✅ پاسخ‌های درست: {correct}\n"
-        f"❌ پاسخ‌های نادرست: {wrong}\n"
-        f"⚪️ بدون پاسخ: {unanswered}\n"
+        f"✅ پاسخ‌های درست: {correct_count}\n"
+        f"❌ پاسخ‌های نادرست: {wrong_count}\n"
+        f"⚪️ بدون پاسخ: {unanswered_count}\n"
         f"📊 کل سوالات: {total_q}\n"
         f"🎯 حد نصاب قبولی: {PASSING_SCORE} پاسخ درست\n"
-        f"━━━━━━━━━━━━━━━━━━"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👇 **بررسی سوالات:** برای مشاهده جزئیات پاسخ هر سوال، روی مربع آن کلیک کنید:"
     )
 
+    reply_markup = InlineKeyboardMarkup(grid_buttons)
     await context.bot.send_message(
-        chat_id=update.effective_chat.id,
+        chat_id=chat_id,
         text=report_card,
         parse_mode='Markdown',
-        reply_markup=MAIN_KEYBOARD
+        reply_markup=reply_markup
     )
-    context.user_data['exam'] = None
 
 # ---------------------------------------------------------
-# اجرا
+# مرور سوالات پس از پایان آزمون
+# ---------------------------------------------------------
+async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    exam = context.user_data.get('exam')
+    if not exam:
+        await query.message.reply_text("اطلاعات آزمون یافت نشد. لطفاً آزمون جدیدی شروع کنید.")
+        return
+
+    q_idx = int(query.data.split('_')[2])
+    questions = exam['questions']
+    q = questions[q_idx]
+
+    q_text_content = q.get('question', f"سوال شماره {q_idx + 1}").strip()
+    options = q.get('options', [])
+    correct_opt = int(q.get('correct_option', 1))
+    user_opt = exam['user_answers'].get(q_idx)
+
+    msg_text = f"🔍 **مرور سوال شماره {q_idx + 1}:**\n\n{q_text_content}\n\n"
+
+    for i, opt in enumerate(options):
+        opt_num = i + 1
+        opt_str = clean_option_text(opt)
+        
+        if opt_num == correct_opt and opt_num == user_opt:
+            msg_text += f"🟢 {opt_num}. {opt_str} (پاسخ درست شما)\n"
+        elif opt_num == correct_opt:
+            msg_text += f"🟢 {opt_num}. {opt_str} (پاسخ صحیح)\n"
+        elif opt_num == user_opt:
+            msg_text += f"🔴 {opt_num}. {opt_str} (انتخاب اشتباه شما)\n"
+        else:
+            msg_text += f"⚪️ {opt_num}. {opt_str}\n"
+
+    exam_num = exam['exam_num']
+    q_num = q_idx + 1
+    paths = [await find_image_path(exam_num, q_num, i) for i in range(1, 5)]
+    paths = [p for p in paths if p is not None]
+
+    chat_id = update.effective_chat.id
+    if len(paths) == 4:
+        grid_bytes = create_2x2_grid(paths[0], paths[1], paths[2], paths[3])
+        await context.bot.send_photo(chat_id=chat_id, photo=grid_bytes, caption=msg_text, parse_mode='Markdown')
+    else:
+        await context.bot.send_message(chat_id=chat_id, text=msg_text, parse_mode='Markdown')
+
+# ---------------------------------------------------------
+# اجرای برنامه
 # ---------------------------------------------------------
 def main():
     if not TOKEN:
@@ -345,9 +466,10 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(handle_exam_selection, pattern="^select_exam_"))
-    app.add_handler(CallbackQueryHandler(handle_answer, pattern="^ans_"))
+    app.add_handler(CallbackQueryHandler(handle_review_question, pattern="^review_q_"))
+    app.add_handler(CallbackQueryHandler(handle_answer, pattern="^(ans_|finish_exam_now)"))
 
-    print("Bot is up...")
+    print("Bot is running with full features...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':

@@ -2,6 +2,8 @@ import os
 import json
 import io
 import asyncio
+import threading
+from flask import Flask
 from PIL import Image, ImageDraw
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -14,22 +16,36 @@ from telegram.ext import (
 )
 
 # ---------------------------------------------------------
-# تنظیمات اصلی
+# سرور سبک Flask جهت پایداری در Render
+# ---------------------------------------------------------
+app_web = Flask(__name__)
+
+@app_web.route('/')
+def home():
+    return "Bot is running inline!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app_web.run(host="0.0.0.0", port=port)
+
+# ---------------------------------------------------------
+# تنظیمات اصلی ربات
 # ---------------------------------------------------------
 TOKEN = os.environ.get('TOKEN')
 QUESTIONS_FILE = 'questions.json'
 STATS_FILE = 'user_stats.json'
 IMAGES_DIR = 'images/'
 PASSING_SCORE = 26
-EXAM_TIMEOUT_SECONDS = 20 * 60  # ۲۰ دقیقه زمان آزمون
+EXAM_TIMEOUT_SECONDS = 20 * 60
 
 PERSIAN_DIGITS = {'1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹', '0': '۰'}
+RLM = "\u200f"  # Right-to-Left Mark جهت تنظیم راست‌چینی متون
 
 def to_persian_num(num):
     return ''.join(PERSIAN_DIGITS.get(char, char) for char in str(num))
 
 # ---------------------------------------------------------
-# مدیریت داده‌ها
+# مدیریت فایل‌ها و آمار
 # ---------------------------------------------------------
 def load_questions():
     if os.path.exists(QUESTIONS_FILE):
@@ -124,7 +140,6 @@ def create_2x2_grid(img1_path, img2_path, img3_path, img4_path):
 # جستجوی هوشمند تصاویر
 # ---------------------------------------------------------
 async def find_question_image(exam_num, q_num):
-    """جستجوی تصویر اختصاصی خود سوال"""
     candidates = [
         os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}.jpg"),
         os.path.join(IMAGES_DIR, f"E{exam_num}_q{q_num}.jpg"),
@@ -136,7 +151,6 @@ async def find_question_image(exam_num, q_num):
     return None
 
 async def find_option_images(exam_num, q_num):
-    """جستجوی تصاویر گزینه‌ها"""
     paths = []
     for opt_num in range(1, 5):
         candidates = [
@@ -158,7 +172,7 @@ async def find_option_images(exam_num, q_num):
 def clean_option_text(opt):
     text = str(opt).strip()
     if text.lower().endswith(('.jpg', '.jpeg', '.png')):
-        return "تصویر گزینه"
+        return ""
     return text
 
 # ---------------------------------------------------------
@@ -171,7 +185,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "به ربات آزمون آیین‌نامه خوش آمدید!\nبرای شروع آزمون یا مشاهده آمار کلی، از دکمه‌های زیر استفاده کنید.",
+        f"{RLM}به ربات آزمون آیین‌نامه خوش آمدید!\nبرای شروع آزمون یا مشاهده آمار کلی، از دکمه‌های زیر استفاده کنید.",
         reply_markup=MAIN_KEYBOARD
     )
 
@@ -187,10 +201,10 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = load_stats().get(user_id, {"total": 0, "passed": 0, "failed": 0})
     
     msg = (
-        f"📊 **آمار کلی آزمون‌های شما:**\n\n"
-        f"🔹 تعداد کل آزمون‌های شرکت‌شده: {stats['total']}\n"
-        f"✅ تعداد قبول‌شده: {stats['passed']}\n"
-        f"❌ تعداد مردود‌شده: {stats['failed']}"
+        f"{RLM}📊 **آمار کلی آزمون‌های شما:**\n\n"
+        f"{RLM}🔹 تعداد کل آزمون‌های شرکت‌شده: {stats['total']}\n"
+        f"{RLM}✅ تعداد قبول‌شده: {stats['passed']}\n"
+        f"{RLM}❌ تعداد مردود‌شده: {stats['failed']}"
     )
     await update.message.reply_text(msg, parse_mode='Markdown')
 
@@ -200,7 +214,7 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     questions_data = load_questions()
     if not questions_data:
-        await update.message.reply_text("❌ فایل سوالات (questions.json) بارگذاری نشد.")
+        await update.message.reply_text(f"{RLM}❌ فایل سوالات (questions.json) بارگذاری نشد.")
         return
 
     keyboard = []
@@ -214,7 +228,7 @@ async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(row)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("لطفاً شماره آزمون مورد نظر خود را انتخاب کنید:", reply_markup=reply_markup)
+    await update.message.reply_text(f"{RLM}لطفاً شماره آزمون مورد نظر خود را انتخاب کنید:", reply_markup=reply_markup)
 
 async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -233,7 +247,7 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
     if not exam_questions:
-        await query.message.reply_text(f"❌ سوالات مربوط به آزمون {exam_num} یافت نشد.")
+        await query.message.reply_text(f"{RLM}❌ سوالات مربوط به آزمون {exam_num} یافت نشد.")
         return
 
     if 'timer_task' in context.user_data and context.user_data['timer_task']:
@@ -259,7 +273,7 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
     await context.bot.send_message(
         chat_id=chat_id,
-        text=f"🚗 **آزمون شماره {exam_num} شروع شد.**\n⏱ زمان آزمون: **۲۰ دقیقه**\nتعداد سوالات: {len(exam_questions)}\nموفق باشید!",
+        text=f"{RLM}🚗 **آزمون شماره {exam_num} شروع شد.**\n⏱ زمان آزمون: **۲۰ دقیقه**\nتعداد سوالات: {len(exam_questions)}\nموفق باشید!",
         parse_mode='Markdown'
     )
     await send_next_question(update, context)
@@ -268,11 +282,11 @@ async def exam_timer(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     await asyncio.sleep(EXAM_TIMEOUT_SECONDS)
     exam = context.user_data.get('exam')
     if exam and exam.get('active'):
-        await context.bot.send_message(chat_id=chat_id, text="⏰ **زمان ۲۰ دقیقه‌ای آزمون به پایان رسید!**", parse_mode='Markdown')
+        await context.bot.send_message(chat_id=chat_id, text=f"{RLM}⏰ **زمان ۲۰ دقیقه‌ای آزمون به پایان رسید!**", parse_mode='Markdown')
         await finish_exam_by_chat_id(context, chat_id)
 
 # ---------------------------------------------------------
-# ارسال سوالات و دکمه‌های ناوبری (قبلی/بعدی)
+# ارسال سوالات با چینش دقیق کلیدها و راست‌چینی
 # ---------------------------------------------------------
 async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     exam = context.user_data.get('exam')
@@ -290,17 +304,26 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     q_text_content = q.get('question', f"سوال شماره {idx + 1}").strip()
     options = q.get('options', [])
     
-    selected_opt = exam['user_answers'].get(idx)
-    selected_str = f"\n\n📌 **پاسخ انتخابی شما:** گزینه {selected_opt}" if selected_opt else ""
+    exam_num = exam['exam_num']
+    q_num = idx + 1
 
-    q_text = f"❓ **سوال {idx + 1} از {total_q}:**\n\n{q_text_content}"
-    
-    formatted_options = [f"{i+1}. {clean_option_text(opt)}" for i, opt in enumerate(options) if str(opt).strip()]
-    if formatted_options:
-        q_text += "\n\n" + "\n".join(formatted_options)
+    q_img_path = await find_question_image(exam_num, q_num)
+    opt_img_paths = await find_option_images(exam_num, q_num)
+
+    selected_opt = exam['user_answers'].get(idx)
+    selected_str = f"\n\n{RLM}📌 **پاسخ انتخابی شما:** گزینه {selected_opt}" if selected_opt else ""
+
+    q_text = f"{RLM}❓ **سوال {idx + 1} از {total_q}:**\n\n{RLM}{q_text_content}"
+
+    # اگر تصاویر ۴ گزینه‌ای وجود نداشت، گزینه‌های متنی نمایش داده می‌شوند
+    if not opt_img_paths:
+        formatted_options = [f"{RLM}{i+1}. {clean_option_text(opt)}" for i, opt in enumerate(options) if str(opt).strip()]
+        if formatted_options:
+            q_text += "\n\n" + "\n".join(formatted_options)
     
     q_text += selected_str
 
+    # چینش استاندارد ۲ در ۲ برای پاسخ‌ها
     keyboard = [
         [
             InlineKeyboardButton("گزینه ۱", callback_data="ans_1"),
@@ -312,7 +335,6 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ]
     ]
 
-    # اضافه کردن دکمه‌های ناوبری (قبلی / بعدی)
     nav_row = []
     if idx > 0:
         nav_row.append(InlineKeyboardButton("◀️ قبلی", callback_data="nav_prev"))
@@ -325,13 +347,6 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
-
-    exam_num = exam['exam_num']
-    q_num = idx + 1
-
-    # بررسی انواع تصویر
-    q_img_path = await find_question_image(exam_num, q_num)
-    opt_img_paths = await find_option_images(exam_num, q_num)
 
     if opt_img_paths:
         grid_bytes = create_2x2_grid(*opt_img_paths)
@@ -375,7 +390,7 @@ async def handle_answer_and_nav(update: Update, context: ContextTypes.DEFAULT_TY
     await send_next_question(update, context)
 
 # ---------------------------------------------------------
-# پایان آزمون
+# صدور مطمئن کارنامه پایانی
 # ---------------------------------------------------------
 async def finish_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
@@ -389,7 +404,10 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     exam['active'] = False
 
     if 'timer_task' in context.user_data and context.user_data['timer_task']:
-        context.user_data['timer_task'].cancel()
+        try:
+            context.user_data['timer_task'].cancel()
+        except Exception:
+            pass
 
     questions = exam['questions']
     user_answers = exam['user_answers']
@@ -402,7 +420,11 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     row = []
 
     for idx, q in enumerate(questions):
-        correct_opt = int(q.get('correct_option', 1))
+        try:
+            correct_opt = int(q.get('correct_option', 1))
+        except Exception:
+            correct_opt = 1
+            
         user_opt = user_answers.get(idx)
 
         if user_opt is None:
@@ -432,16 +454,16 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     status_text = "قبول شدید" if passed else "مردود شدید"
 
     report_card = (
-        f"📝 **کارنامه آزمون شماره {exam['exam_num']}**\n"
+        f"{RLM}📝 **کارنامه آزمون شماره {exam['exam_num']}**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"نتیجه آزمون: **{status_text}** {status_icon}\n\n"
-        f"✅ پاسخ‌های درست: {correct_count}\n"
-        f"❌ پاسخ‌های نادرست: {wrong_count}\n"
-        f"⚪️ بدون پاسخ: {unanswered_count}\n"
-        f"📊 کل سوالات: {total_q}\n"
-        f"🎯 حد نصاب قبولی: {PASSING_SCORE} پاسخ درست\n"
+        f"{RLM}نتیجه آزمون: **{status_text}** {status_icon}\n\n"
+        f"{RLM}✅ پاسخ‌های درست: {correct_count}\n"
+        f"{RLM}❌ پاسخ‌های نادرست: {wrong_count}\n"
+        f"{RLM}⚪️ بدون پاسخ: {unanswered_count}\n"
+        f"{RLM}📊 کل سوالات: {total_q}\n"
+        f"{RLM}🎯 حد نصاب قبولی: {PASSING_SCORE} پاسخ درست\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"👇 **بررسی سوالات:** برای مشاهده جزئیات هر سوال کلیک کنید:"
+        f"{RLM}👇 **بررسی سوالات:** برای مشاهده جزئیات هر سوال کلیک کنید:"
     )
 
     reply_markup = InlineKeyboardMarkup(grid_buttons)
@@ -453,7 +475,7 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     )
 
 # ---------------------------------------------------------
-# مرور سوالات با دکمه‌های قبلی/بعدی و پاک کردن پیام قبلی
+# مرور سوالات پس از پایان آزمون
 # ---------------------------------------------------------
 async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -461,7 +483,7 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
 
     exam = context.user_data.get('exam')
     if not exam:
-        await query.message.reply_text("اطلاعات آزمون یافت نشد.")
+        await query.message.reply_text(f"{RLM}اطلاعات آزمون یافت نشد.")
         return
 
     q_idx = int(query.data.split('_')[2])
@@ -469,7 +491,6 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
     total_q = len(questions)
     q = questions[q_idx]
 
-    # پاک کردن پیام مرور قبلی جهت خلوت ماندن چت
     chat_id = update.effective_chat.id
     if exam.get('last_review_msg_id'):
         try:
@@ -479,25 +500,42 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
 
     q_text_content = q.get('question', f"سوال شماره {q_idx + 1}").strip()
     options = q.get('options', [])
-    correct_opt = int(q.get('correct_option', 1))
+    
+    try:
+        correct_opt = int(q.get('correct_option', 1))
+    except Exception:
+        correct_opt = 1
+        
     user_opt = exam['user_answers'].get(q_idx)
 
-    msg_text = f"🔍 **مرور سوال شماره {q_idx + 1} از {total_q}:**\n\n{q_text_content}\n\n"
+    msg_text = f"{RLM}🔍 **مرور سوال شماره {q_idx + 1} از {total_q}:**\n\n{RLM}{q_text_content}\n\n"
 
-    for i, opt in enumerate(options):
-        opt_num = i + 1
-        opt_str = clean_option_text(opt)
-        
-        if opt_num == correct_opt and opt_num == user_opt:
-            msg_text += f"🟢 {opt_num}. {opt_str} (پاسخ درست شما)\n"
-        elif opt_num == correct_opt:
-            msg_text += f"🟢 {opt_num}. {opt_str} (پاسخ صحیح)\n"
-        elif opt_num == user_opt:
-            msg_text += f"🔴 {opt_num}. {opt_str} (انتخاب اشتباه شما)\n"
+    exam_num = exam['exam_num']
+    q_num = q_idx + 1
+
+    opt_img_paths = await find_option_images(exam_num, q_num)
+
+    if not opt_img_paths:
+        for i, opt in enumerate(options):
+            opt_num = i + 1
+            opt_str = clean_option_text(opt)
+            
+            if opt_num == correct_opt and opt_num == user_opt:
+                msg_text += f"{RLM}🟢 {opt_num}. {opt_str} (پاسخ درست شما)\n"
+            elif opt_num == correct_opt:
+                msg_text += f"{RLM}🟢 {opt_num}. {opt_str} (پاسخ صحیح)\n"
+            elif opt_num == user_opt:
+                msg_text += f"{RLM}🔴 {opt_num}. {opt_str} (انتخاب اشتباه شما)\n"
+            else:
+                msg_text += f"{RLM}⚪️ {opt_num}. {opt_str}\n"
+    else:
+        if user_opt is None:
+            msg_text += f"{RLM}⚪️ شما به این سوال پاسخ نداده‌اید.\n{RLM}🟢 پاسخ صحیح: گزینه {correct_opt}"
+        elif user_opt == correct_opt:
+            msg_text += f"{RLM}🟢 پاسخ شما (گزینه {user_opt}) درست بود."
         else:
-            msg_text += f"⚪️ {opt_num}. {opt_str}\n"
+            msg_text += f"{RLM}🔴 پاسخ شما: گزینه {user_opt} (نادرست)\n{RLM}🟢 پاسخ صحیح: گزینه {correct_opt}"
 
-    # کیبورد ناوبری مرور (قبلی/بعدی)
     nav_keyboard = []
     nav_row = []
     if q_idx > 0:
@@ -509,11 +547,7 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
 
     reply_markup = InlineKeyboardMarkup(nav_keyboard) if nav_keyboard else None
 
-    exam_num = exam['exam_num']
-    q_num = q_idx + 1
-
     q_img_path = await find_question_image(exam_num, q_num)
-    opt_img_paths = await find_option_images(exam_num, q_num)
 
     sent_msg = None
     if opt_img_paths:
@@ -534,6 +568,8 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
 def main():
     if not TOKEN:
         raise ValueError("متغیر TOKEN تنظیم نشده است!")
+
+    threading.Thread(target=run_flask, daemon=True).start()
 
     app = ApplicationBuilder().token(TOKEN).build()
 

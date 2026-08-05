@@ -15,7 +15,7 @@ from telegram.ext import (
 )
 
 # ---------------------------------------------------------
-# سرور سبک Flask جهت پایداری در Render (با ساختار ایمن)
+# سرور سبک Flask جهت پایداری در Render (اجرای ایمن)
 # ---------------------------------------------------------
 try:
     from flask import Flask
@@ -44,7 +44,7 @@ PASSING_SCORE = 26
 EXAM_TIMEOUT_SECONDS = 20 * 60
 
 PERSIAN_DIGITS = {'1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹', '0': '۰'}
-RLM = "\u200f"  # کاراکتر راست‌چینی متون
+RLM = "\u200f"  # کاراکتر کنترل راست‌چینی متون (RTL)
 
 def to_persian_num(num):
     return ''.join(PERSIAN_DIGITS.get(char, char) for char in str(num))
@@ -93,7 +93,7 @@ def update_user_stats(user_id, passed: bool):
     save_stats(stats)
 
 # ---------------------------------------------------------
-# ساخت شبکه تصویری ۲x۲
+# ساخت شبکه تصویری ۲x۲ برای گزینه‌ها
 # ---------------------------------------------------------
 def draw_digit_vector(draw, digit, left, top, size=60, color=(0, 0, 0), stroke=8):
     l, t, w, h = left, top, size, size
@@ -223,7 +223,11 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     questions_data = load_questions()
     if not questions_data:
-        await update.message.reply_text(f"{RLM}❌ فایل سوالات (questions.json) بارگذاری نشد.")
+        msg = f"{RLM}❌ فایل سوالات (questions.json) بارگذاری نشد."
+        if update.callback_query:
+            await update.callback_query.message.reply_text(msg)
+        else:
+            await update.message.reply_text(msg)
         return
 
     keyboard = []
@@ -237,7 +241,12 @@ async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(row)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(f"{RLM}لطفاً شماره آزمون مورد نظر خود را انتخاب کنید:", reply_markup=reply_markup)
+    text = f"{RLM}لطفاً شماره آزمون مورد نظر خود را انتخاب کنید:"
+    
+    if update.callback_query:
+        await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup)
 
 async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -455,6 +464,9 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     if row:
         grid_buttons.append(row)
 
+    # افزودن دکمه شروع آزمون جدید
+    grid_buttons.append([InlineKeyboardButton("🔄 شروع آزمون جدید", callback_data="start_new_exam_from_report")])
+
     total_q = len(questions)
     passed = correct_count >= PASSING_SCORE
     
@@ -572,6 +584,11 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
     if sent_msg:
         exam['last_review_msg_id'] = sent_msg.message_id
 
+async def handle_start_new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await show_exam_list(update, context)
+
 # ---------------------------------------------------------
 # اجرای برنامه
 # ---------------------------------------------------------
@@ -592,6 +609,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_exam_selection, pattern="^select_exam_"))
     app.add_handler(CallbackQueryHandler(handle_review_question, pattern="^review_q_"))
     app.add_handler(CallbackQueryHandler(handle_answer_and_nav, pattern="^(ans_|nav_|finish_exam_now)"))
+    app.add_handler(CallbackQueryHandler(handle_start_new_exam, pattern="^start_new_exam_from_report$"))
 
     print("Bot is up and running...")
     app.run_polling(drop_pending_updates=True)

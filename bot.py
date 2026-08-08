@@ -34,7 +34,7 @@ except ImportError:
     flask_available = False
 
 # ---------------------------------------------------------
-# تنظیمات اصلی ربات و کاراکترهای فارسی
+# تنظیمات اصلی ربات، کانال و کاراکترهای فارسی
 # ---------------------------------------------------------
 TOKEN = os.environ.get('TOKEN')
 QUESTIONS_FILE = 'questions.json'
@@ -42,6 +42,10 @@ STATS_FILE = 'user_stats.json'
 IMAGES_DIR = 'images/'
 PASSING_SCORE = 26
 EXAM_TIMEOUT_SECONDS = 20 * 60
+
+# تنظیمات کانال برای جوین اجباری
+CHANNEL_USERNAME = "@ds_pardisan"
+CHANNEL_LINK = "https://t.me/ds_pardisan"
 
 PERSIAN_DIGITS = {'1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹', '0': '۰'}
 RLM = "\u200f"  # کاراکتر اجباری راست‌چینی متون (RTL)
@@ -59,6 +63,46 @@ def clean_text(text):
         return ""
     cleaned = str(text).strip()
     return to_persian_num(cleaned)
+
+# ---------------------------------------------------------
+# بررسی عضویت در کانال
+# ---------------------------------------------------------
+async def is_user_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    try:
+        member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        if member.status in ['member', 'administrator', 'creator']:
+            return True
+        return False
+    except Exception as e:
+        print(f"Error checking membership: {e}")
+        # در صورت بروز خطایی مثل عدم وجود دسترسی ادمین، برای جلوگیری از مسدود شدن کاربران True برمی‌گرداند
+        return True
+
+async def check_membership_and_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user_id = update.effective_user.id
+    if await is_user_member(context, user_id):
+        return True
+
+    keyboard = [
+        [InlineKeyboardButton("📢 عضویت در کانال", url=CHANNEL_LINK)],
+        [InlineKeyboardButton("✅ عضو شدم / بررسی مجدد", callback_data="check_membership")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    msg_text = (
+        f"{RLM}⚠️ **جهت استفاده از ربات، ابتدا باید در کانال زیر عضو شوید:**\n\n"
+        f"{RLM}کانال: {CHANNEL_USERNAME}\n\n"
+        f"{RLM}پس از عضویت، روی دکمه «عضو شدم / بررسی مجدد» کلیک کنید."
+    )
+
+    if update.callback_query:
+        try:
+            await update.callback_query.message.reply_text(msg_text, reply_markup=reply_markup, parse_mode='Markdown')
+        except Exception:
+            pass
+    elif update.message:
+        await update.message.reply_text(msg_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+    return False
 
 # ---------------------------------------------------------
 # مدیریت فایل‌ها و آمار
@@ -196,7 +240,7 @@ def clean_option_text(opt):
     return text
 
 # ---------------------------------------------------------
-# کیبورد اصلی
+# کیبورد اصلی و دستوران اولیه
 # ---------------------------------------------------------
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [['شروع آزمون آیین‌نامه 🚗'], ['آمار من 📊']],
@@ -204,12 +248,35 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 )
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_membership_and_prompt(update, context):
+        return
+
     await update.message.reply_text(
         f"{RLM}به ربات آزمون آیین‌نامه خوش آمدید!\n{RLM}برای شروع آزمون یا مشاهده آمار کلی، از دکمه‌های زیر استفاده کنید.",
         reply_markup=MAIN_KEYBOARD
     )
 
+async def handle_check_membership_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if await is_user_member(context, update.effective_user.id):
+        try:
+            await query.delete_message()
+        except Exception:
+            pass
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"{RLM}✅ عضویت شما تایید شد!\n{RLM}به ربات آزمون آیین‌نامه خوش آمدید.",
+            reply_markup=MAIN_KEYBOARD
+        )
+    else:
+        await query.answer("❌ شما هنوز در کانال عضو نشده‌اید!", show_alert=True)
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_membership_and_prompt(update, context):
+        return
+
     text = clean_text(update.message.text)
     if 'شروع آزمون' in text:
         await show_exam_list(update, context)
@@ -262,6 +329,9 @@ async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    if not await check_membership_and_prompt(update, context):
+        return
 
     exam_num = int(query.data.split('_')[2])
     persian_exam_num = to_persian_num(exam_num)
@@ -395,6 +465,9 @@ async def handle_answer_and_nav(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
 
+    if not await check_membership_and_prompt(update, context):
+        return
+
     data = query.data
     exam = context.user_data.get('exam')
     if not exam or not exam.get('active'):
@@ -517,6 +590,9 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     await query.answer()
 
+    if not await check_membership_and_prompt(update, context):
+        return
+
     exam = context.user_data.get('exam')
     if not exam:
         await query.message.reply_text(f"{RLM}اطلاعات آزمون یافت نشد.")
@@ -602,6 +678,10 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
 async def handle_start_new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    if not await check_membership_and_prompt(update, context):
+        return
+
     await show_exam_list(update, context)
 
 # ---------------------------------------------------------
@@ -620,6 +700,7 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CallbackQueryHandler(handle_check_membership_callback, pattern="^check_membership$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(handle_exam_selection, pattern="^select_exam_"))
     app.add_handler(CallbackQueryHandler(handle_review_question, pattern="^review_q_"))

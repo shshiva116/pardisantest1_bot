@@ -15,7 +15,7 @@ from telegram.ext import (
 )
 
 # ---------------------------------------------------------
-# سرور سبک Flask جهت پایداری در Render (اجرای ایمن)
+# سرور سبک Flask جهت پایداری در بسترهای ابری
 # ---------------------------------------------------------
 try:
     from flask import Flask
@@ -34,7 +34,7 @@ except ImportError:
     flask_available = False
 
 # ---------------------------------------------------------
-# تنظیمات اصلی ربات
+# تنظیمات اصلی ربات و کاراکترهای فارسی
 # ---------------------------------------------------------
 TOKEN = os.environ.get('TOKEN')
 QUESTIONS_FILE = 'questions.json'
@@ -44,10 +44,21 @@ PASSING_SCORE = 26
 EXAM_TIMEOUT_SECONDS = 20 * 60
 
 PERSIAN_DIGITS = {'1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹', '0': '۰'}
-RLM = "\u200f"  # کاراکتر کنترل راست‌چینی متون (RTL)
+RLM = "\u200f"  # کاراکتر اجباری راست‌چینی متون (RTL)
 
-def to_persian_num(num):
-    return ''.join(PERSIAN_DIGITS.get(char, char) for char in str(num))
+def to_persian_num(text):
+    """تبدیل تمام اعداد انگلیسی موجود در یک متن یا عدد به فارسی"""
+    if text is None:
+        return ""
+    str_text = str(text)
+    return ''.join(PERSIAN_DIGITS.get(char, char) for char in str_text)
+
+def clean_text(text):
+    """پاک‌سازی فاصله‌های اضافه و تبدیل اعداد به فارسی"""
+    if text is None:
+        return ""
+    cleaned = str(text).strip()
+    return to_persian_num(cleaned)
 
 # ---------------------------------------------------------
 # مدیریت فایل‌ها و آمار
@@ -179,7 +190,7 @@ async def find_option_images(exam_num, q_num):
     return None
 
 def clean_option_text(opt):
-    text = str(opt).strip()
+    text = clean_text(opt)
     if text.lower().endswith(('.jpg', '.jpeg', '.png')):
         return ""
     return text
@@ -194,15 +205,15 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"{RLM}به ربات آزمون آیین‌نامه خوش آمدید!\nبرای شروع آزمون یا مشاهده آمار کلی، از دکمه‌های زیر استفاده کنید.",
+        f"{RLM}به ربات آزمون آیین‌نامه خوش آمدید!\n{RLM}برای شروع آزمون یا مشاهده آمار کلی، از دکمه‌های زیر استفاده کنید.",
         reply_markup=MAIN_KEYBOARD
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if text == 'شروع آزمون آیین‌نامه 🚗':
+    text = clean_text(update.message.text)
+    if 'شروع آزمون' in text:
         await show_exam_list(update, context)
-    elif text == 'آمار من 📊':
+    elif 'آمار من' in text:
         await show_stats(update, context)
 
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -211,9 +222,9 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     msg = (
         f"{RLM}📊 **آمار کلی آزمون‌های شما:**\n\n"
-        f"{RLM}🔹 تعداد کل آزمون‌های شرکت‌شده: {stats['total']}\n"
-        f"{RLM}✅ تعداد قبول‌شده: {stats['passed']}\n"
-        f"{RLM}❌ تعداد مردود‌شده: {stats['failed']}"
+        f"{RLM}🔹 تعداد کل آزمون‌های شرکت‌شده: {to_persian_num(stats['total'])}\n"
+        f"{RLM}✅ تعداد قبول‌شده: {to_persian_num(stats['passed'])}\n"
+        f"{RLM}❌ تعداد مردود‌شده: {to_persian_num(stats['failed'])}"
     )
     await update.message.reply_text(msg, parse_mode='Markdown')
 
@@ -233,7 +244,7 @@ async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     row = []
     for i in range(1, 18):
-        row.append(InlineKeyboardButton(f"آزمون {i}", callback_data=f"select_exam_{i}"))
+        row.append(InlineKeyboardButton(f"آزمون {to_persian_num(i)}", callback_data=f"select_exam_{i}"))
         if len(row) == 3:
             keyboard.append(row)
             row = []
@@ -265,7 +276,7 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
     if not exam_questions:
-        await query.message.reply_text(f"{RLM}❌ سوالات مربوط به آزمون {exam_num} یافت نشد.")
+        await query.message.reply_text(f"{RLM}❌ سوالات مربوط به آزمون {persian_exam_num} یافت نشد.")
         return
 
     if 'timer_task' in context.user_data and context.user_data['timer_task']:
@@ -294,7 +305,7 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
     await context.bot.send_message(
         chat_id=chat_id,
-        text=f"{RLM}🚗 **آزمون شماره {exam_num} شروع شد.**\n⏱ زمان آزمون: **۲۰ دقیقه**\nتعداد سوالات: {len(exam_questions)}\nموفق باشید!",
+        text=f"{RLM}🚗 **آزمون شماره {persian_exam_num} شروع شد.**\n{RLM}⏱ زمان آزمون: **{to_persian_num(20)} دقیقه**\n{RLM}تعداد سوالات: {to_persian_num(len(exam_questions))}\n{RLM}موفق باشید!",
         parse_mode='Markdown'
     )
     await send_next_question(update, context)
@@ -303,7 +314,7 @@ async def exam_timer(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     await asyncio.sleep(EXAM_TIMEOUT_SECONDS)
     exam = context.user_data.get('exam')
     if exam and exam.get('active'):
-        await context.bot.send_message(chat_id=chat_id, text=f"{RLM}⏰ **زمان ۲۰ دقیقه‌ای آزمون به پایان رسید!**", parse_mode='Markdown')
+        await context.bot.send_message(chat_id=chat_id, text=f"{RLM}⏰ **زمان {to_persian_num(20)} دقیقه‌ای آزمون به پایان رسید!**", parse_mode='Markdown')
         await finish_exam_by_chat_id(context, chat_id)
 
 # ---------------------------------------------------------
@@ -322,7 +333,7 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     q = exam['questions'][idx]
-    q_text_content = q.get('question', f"سوال شماره {idx + 1}").strip()
+    q_text_content = clean_text(q.get('question', f"سوال شماره {to_persian_num(idx + 1)}"))
     options = q.get('options', [])
     
     exam_num = exam['exam_num']
@@ -332,12 +343,16 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     opt_img_paths = await find_option_images(exam_num, q_num)
 
     selected_opt = exam['user_answers'].get(idx)
-    selected_str = f"\n\n{RLM}📌 **پاسخ انتخابی شما:** گزینه {selected_opt}" if selected_opt else ""
+    selected_str = f"\n\n{RLM}📌 **پاسخ انتخابی شما:** گزینه {to_persian_num(selected_opt)}" if selected_opt else ""
 
-    q_text = f"{RLM}❓ **سوال {idx + 1} از {total_q}:**\n\n{RLM}{q_text_content}"
+    q_text = f"{RLM}❓ **سوال {to_persian_num(idx + 1)} از {to_persian_num(total_q)}:**\n\n{RLM}{q_text_content}"
 
     if not opt_img_paths:
-        formatted_options = [f"{RLM}{i+1}. {clean_option_text(opt)}" for i, opt in enumerate(options) if str(opt).strip()]
+        formatted_options = []
+        for i, opt in enumerate(options):
+            cleaned_opt = clean_option_text(opt)
+            if cleaned_opt:
+                formatted_options.append(f"{RLM}{to_persian_num(i+1)}. {cleaned_opt}")
         if formatted_options:
             q_text += "\n\n" + "\n".join(formatted_options)
     
@@ -345,12 +360,12 @@ async def send_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     keyboard = [
         [
-            InlineKeyboardButton("گزینه ۱", callback_data="ans_1"),
-            InlineKeyboardButton("گزینه ۲", callback_data="ans_2"),
+            InlineKeyboardButton(f"گزینه {to_persian_num(1)}", callback_data="ans_1"),
+            InlineKeyboardButton(f"گزینه {to_persian_num(2)}", callback_data="ans_2"),
         ],
         [
-            InlineKeyboardButton("گزینه ۳", callback_data="ans_3"),
-            InlineKeyboardButton("گزینه ۴", callback_data="ans_4"),
+            InlineKeyboardButton(f"گزینه {to_persian_num(3)}", callback_data="ans_3"),
+            InlineKeyboardButton(f"گزینه {to_persian_num(4)}", callback_data="ans_4"),
         ]
     ]
 
@@ -445,16 +460,17 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
             correct_opt = 1
             
         user_opt = user_answers.get(idx)
+        persian_q_num = to_persian_num(idx + 1)
 
         if user_opt is None:
             unanswered_count += 1
-            btn_text = f"⬜️ {idx + 1}"
+            btn_text = f"⬜️ {persian_q_num}"
         elif user_opt == correct_opt:
             correct_count += 1
-            btn_text = f"🟩 {idx + 1}"
+            btn_text = f"🟩 {persian_q_num}"
         else:
             wrong_count += 1
-            btn_text = f"🟥 {idx + 1}"
+            btn_text = f"🟥 {persian_q_num}"
 
         row.append(InlineKeyboardButton(btn_text, callback_data=f"review_q_{idx}"))
         if len(row) == 5:
@@ -464,7 +480,6 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     if row:
         grid_buttons.append(row)
 
-    # افزودن دکمه شروع آزمون جدید
     grid_buttons.append([InlineKeyboardButton("🔄 شروع آزمون جدید", callback_data="start_new_exam_from_report")])
 
     total_q = len(questions)
@@ -476,14 +491,14 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     status_text = "قبول شدید" if passed else "مردود شدید"
 
     report_card = (
-        f"{RLM}📝 **کارنامه آزمون شماره {exam['exam_num']}**\n"
+        f"{RLM}📝 **کارنامه آزمون شماره {to_persian_num(exam['exam_num'])}**\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"{RLM}نتیجه آزمون: **{status_text}** {status_icon}\n\n"
-        f"{RLM}✅ پاسخ‌های درست: {correct_count}\n"
-        f"{RLM}❌ پاسخ‌های نادرست: {wrong_count}\n"
-        f"{RLM}⚪️ بدون پاسخ: {unanswered_count}\n"
-        f"{RLM}📊 کل سوالات: {total_q}\n"
-        f"{RLM}🎯 حد نصاب قبولی: {PASSING_SCORE} پاسخ درست\n"
+        f"{RLM}✅ پاسخ‌های درست: {to_persian_num(correct_count)}\n"
+        f"{RLM}❌ پاسخ‌های نادرست: {to_persian_num(wrong_count)}\n"
+        f"{RLM}⚪️ بدون پاسخ: {to_persian_num(unanswered_count)}\n"
+        f"{RLM}📊 کل سوالات: {to_persian_num(total_q)}\n"
+        f"{RLM}🎯 حد نصاب قبولی: {to_persian_num(PASSING_SCORE)} پاسخ درست\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"{RLM}👇 **بررسی سوالات:** برای مشاهده جزئیات هر سوال کلیک کنید:"
     )
@@ -495,7 +510,6 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
-
 # ---------------------------------------------------------
 # مرور سوالات
 # ---------------------------------------------------------
@@ -520,7 +534,7 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
         except Exception:
             pass
 
-    q_text_content = q.get('question', f"سوال شماره {q_idx + 1}").strip()
+    q_text_content = clean_text(q.get('question', f"سوال شماره {to_persian_num(q_idx + 1)}"))
     options = q.get('options', [])
     
     try:
@@ -530,7 +544,7 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
         
     user_opt = exam['user_answers'].get(q_idx)
 
-    msg_text = f"{RLM}🔍 **مرور سوال شماره {q_idx + 1} از {total_q}:**\n\n{RLM}{q_text_content}\n\n"
+    msg_text = f"{RLM}🔍 **مرور سوال شماره {to_persian_num(q_idx + 1)} از {to_persian_num(total_q)}:**\n\n{RLM}{q_text_content}\n\n"
 
     exam_num = exam['exam_num']
     q_num = q_idx + 1
@@ -541,22 +555,23 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
         for i, opt in enumerate(options):
             opt_num = i + 1
             opt_str = clean_option_text(opt)
+            persian_opt_num = to_persian_num(opt_num)
             
             if opt_num == correct_opt and opt_num == user_opt:
-                msg_text += f"{RLM}🟢 {opt_num}. {opt_str} (پاسخ درست شما)\n"
+                msg_text += f"{RLM}🟢 {persian_opt_num}. {opt_str} (پاسخ درست شما)\n"
             elif opt_num == correct_opt:
-                msg_text += f"{RLM}🟢 {opt_num}. {opt_str} (پاسخ صحیح)\n"
+                msg_text += f"{RLM}🟢 {persian_opt_num}. {opt_str} (پاسخ صحیح)\n"
             elif opt_num == user_opt:
-                msg_text += f"{RLM}🔴 {opt_num}. {opt_str} (انتخاب اشتباه شما)\n"
+                msg_text += f"{RLM}🔴 {persian_opt_num}. {opt_str} (انتخاب اشتباه شما)\n"
             else:
-                msg_text += f"{RLM}⚪️ {opt_num}. {opt_str}\n"
+                msg_text += f"{RLM}⚪️ {persian_opt_num}. {opt_str}\n"
     else:
         if user_opt is None:
-            msg_text += f"{RLM}⚪️ شما به این سوال پاسخ نداده‌اید.\n{RLM}🟢 پاسخ صحیح: گزینه {correct_opt}"
+            msg_text += f"{RLM}⚪️ شما به این سوال پاسخ نداده‌اید.\n{RLM}🟢 پاسخ صحیح: گزینه {to_persian_num(correct_opt)}"
         elif user_opt == correct_opt:
-            msg_text += f"{RLM}🟢 پاسخ شما (گزینه {user_opt}) درست بود."
+            msg_text += f"{RLM}🟢 پاسخ شما (گزینه {to_persian_num(user_opt)}) درست بود."
         else:
-            msg_text += f"{RLM}🔴 پاسخ شما: گزینه {user_opt} (نادرست)\n{RLM}🟢 پاسخ صحیح: گزینه {correct_opt}"
+            msg_text += f"{RLM}🔴 پاسخ شما: گزینه {to_persian_num(user_opt)} (نادرست)\n{RLM}🟢 پاسخ صحیح: گزینه {to_persian_num(correct_opt)}"
 
     nav_keyboard = []
     nav_row = []

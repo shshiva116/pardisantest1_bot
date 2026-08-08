@@ -15,7 +15,7 @@ from telegram.ext import (
 )
 
 # ---------------------------------------------------------
-# سرور سبک Flask جهت پایداری در بسترهای ابری (مثل Railway)
+# سرور سبک Flask جهت پایداری در بسترهای ابری (مانند Railway)
 # ---------------------------------------------------------
 try:
     from flask import Flask
@@ -41,17 +41,16 @@ QUESTIONS_FILE = 'questions.json'
 STATS_FILE = 'user_stats.json'
 IMAGES_DIR = 'images/'
 PASSING_SCORE = 26
-EXAM_TIMEOUT_SECONDS = 20 * 60
+EXAM_TIMEOUT_SECONDS = 20 * 60  # ۲۰ دقیقه
 
-# تنظیمات کانال برای جوین اجباری
 CHANNEL_USERNAME = "@ds_pardisan"
 CHANNEL_LINK = "https://t.me/ds_pardisan"
 
 PERSIAN_DIGITS = {'1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹', '0': '۰'}
-RLM = "\u200f"  # کاراکتر اجباری راست‌چینی متون (RTL)
+RLM = "\u200f"  # کاراکتر راست‌چینی متون
 
 def to_persian_num(text):
-    """تبدیل تمام اعداد انگلیسی موجود در یک متن یا عدد به فارسی"""
+    """تبدیل تمام اعداد انگلیسی به فارسی"""
     if text is None:
         return ""
     str_text = str(text)
@@ -295,13 +294,14 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 # ---------------------------------------------------------
-# انتخاب آزمون و شروع
+# نمایش لیست آزمون‌ها و شروع
 # ---------------------------------------------------------
 async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     questions_data = load_questions()
+    chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
+
     if not questions_data:
         msg = f"{RLM}❌ فایل سوالات (questions.json) بارگذاری نشد."
-        chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
         await context.bot.send_message(chat_id=chat_id, text=msg)
         return
 
@@ -318,7 +318,6 @@ async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     text = f"{RLM}لطفاً شماره آزمون مورد نظر خود را انتخاب کنید:"
     
-    chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
     await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
 
 async def handle_start_new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -559,7 +558,8 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     if row:
         grid_buttons.append(row)
 
-    grid_buttons.append([InlineKeyboardButton("🔄 شروع آزمون جدید", callback_data="start_new_exam_from_report")])
+    # دکمه شروع آزمون جدید
+    grid_buttons.append([InlineKeyboardButton("🔄 شروع آزمون جدید", callback_data="start_new_exam_action")])
 
     total_q = len(questions)
     passed = correct_count >= PASSING_SCORE
@@ -683,7 +683,7 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
         exam['last_review_msg_id'] = sent_msg.message_id
 
 # ---------------------------------------------------------
-# اجرای برنامه
+# اجرای اصلی برنامه و لایه‌بندی درست هندلرها
 # ---------------------------------------------------------
 def main():
     if not TOKEN:
@@ -697,15 +697,22 @@ def main():
 
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # ۱. دستور start
     app.add_handler(CommandHandler("start", start_command))
+
+    # ۲. هندلرهای عمومی Callback
     app.add_handler(CallbackQueryHandler(handle_check_membership_callback, pattern="^check_membership$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(handle_start_new_exam, pattern="^start_new_exam_action$"))
+
+    # ۳. هندلر دکمه‌های شیشه‌ای مربوط به آزمون و سوالات
     app.add_handler(CallbackQueryHandler(handle_exam_selection, pattern="^select_exam_"))
     app.add_handler(CallbackQueryHandler(handle_review_question, pattern="^review_q_"))
     app.add_handler(CallbackQueryHandler(handle_answer_and_nav, pattern="^(ans_|nav_|finish_exam_now)"))
-    app.add_handler(CallbackQueryHandler(handle_start_new_exam, pattern="^start_new_exam_from_report$"))
 
-    print("Bot is up and running...")
+    # ۴. هندلر پیام‌های متنی کیبورد اصلی
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    print("Bot is up and running successfully...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':

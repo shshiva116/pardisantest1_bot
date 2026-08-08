@@ -679,9 +679,13 @@ async def handle_start_new_exam(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
 
-    if not await check_membership_and_prompt(update, context):
-        return
+    # حذف یا ویرایش پیام کارنامه قبلی جهت خلوت ماندن چت
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
 
+    # نمایش لیست آزمون‌ها
     await show_exam_list(update, context)
 
 # ---------------------------------------------------------

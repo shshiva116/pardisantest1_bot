@@ -15,7 +15,7 @@ from telegram.ext import (
 )
 
 # ---------------------------------------------------------
-# سرور سبک Flask جهت پایداری در بسترهای ابری
+# سرور سبک Flask جهت پایداری در بسترهای ابری (مثل Railway)
 # ---------------------------------------------------------
 try:
     from flask import Flask
@@ -75,7 +75,6 @@ async def is_user_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bo
         return False
     except Exception as e:
         print(f"Error checking membership: {e}")
-        # در صورت بروز خطایی مثل عدم وجود دسترسی ادمین، برای جلوگیری از مسدود شدن کاربران True برمی‌گرداند
         return True
 
 async def check_membership_and_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -240,7 +239,7 @@ def clean_option_text(opt):
     return text
 
 # ---------------------------------------------------------
-# کیبورد اصلی و دستوران اولیه
+# کیبورد اصلی و دستورات اولیه
 # ---------------------------------------------------------
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [['شروع آزمون آیین‌نامه 🚗'], ['آمار من 📊']],
@@ -302,10 +301,8 @@ async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     questions_data = load_questions()
     if not questions_data:
         msg = f"{RLM}❌ فایل سوالات (questions.json) بارگذاری نشد."
-        if update.callback_query:
-            await update.callback_query.message.reply_text(msg)
-        else:
-            await update.message.reply_text(msg)
+        chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
+        await context.bot.send_message(chat_id=chat_id, text=msg)
         return
 
     keyboard = []
@@ -321,10 +318,19 @@ async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     text = f"{RLM}لطفاً شماره آزمون مورد نظر خود را انتخاب کنید:"
     
-    if update.callback_query:
-        await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(text, reply_markup=reply_markup)
+    chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
+    await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+
+async def handle_start_new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
+
+    await show_exam_list(update, context)
 
 async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -583,6 +589,7 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
+
 # ---------------------------------------------------------
 # مرور سوالات
 # ---------------------------------------------------------
@@ -674,19 +681,6 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
 
     if sent_msg:
         exam['last_review_msg_id'] = sent_msg.message_id
-
-async def handle_start_new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    # حذف یا ویرایش پیام کارنامه قبلی جهت خلوت ماندن چت
-    try:
-        await query.delete_message()
-    except Exception:
-        pass
-
-    # نمایش لیست آزمون‌ها
-    await show_exam_list(update, context)
 
 # ---------------------------------------------------------
 # اجرای برنامه

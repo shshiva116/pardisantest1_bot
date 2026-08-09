@@ -292,7 +292,8 @@ def build_question_keyboard(q_index, total_q, selected_opt=None):
     if nav_row:
         buttons.append(nav_row)
 
-    buttons.append([InlineKeyboardButton("🏁 پایان آزمون", callback_data="finish_exam_now")])
+    # تغییر متن دکمه به درخواست کاربر
+    buttons.append([InlineKeyboardButton("🏁 پایان آزمون و مشاهده نتیجه", callback_data="finish_exam_now")])
     return InlineKeyboardMarkup(buttons)
 
 async def send_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False):
@@ -317,11 +318,12 @@ async def send_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE,
     opts = q_data.get('options', [])
     opt_imgs = await find_option_images(exam_num, q_idx + 1)
 
+    # حذف کلمه «گزینه» از نمایش متنی (فقط شماره - متن)
     if not opt_imgs and opts and not is_image_option(opts[0]):
         for idx, opt in enumerate(opts):
             p_num = to_persian_num(idx + 1)
             clean_text = to_persian_num(str(opt).strip())
-            caption += f"{RTL_MARK}گزینه {p_num} - {clean_text}\n"
+            caption += f"{RTL_MARK}{p_num} - {clean_text}\n"
 
     q_img = await find_question_image(exam_num, q_idx + 1)
 
@@ -361,7 +363,6 @@ async def handle_answer_and_nav(update: Update, context: ContextTypes.DEFAULT_TY
         opt = int(data.split("_")[1])
         exam['user_answers'][exam['current_index']] = opt
         
-        # انتقال خودکار به سوال بعدی یا اتمام آزمون در صورت رسیدن به سوال آخر
         if exam['current_index'] < len(exam['questions']) - 1:
             exam['current_index'] += 1
             await send_exam_question(update, context, is_callback=True)
@@ -489,12 +490,13 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
     exam_num = exam['exam_num']
     opt_imgs = await find_option_images(exam_num, q_idx + 1)
 
+    # حذف کلمه «گزینه» از نمایش متنی در مرور سوالات
     if not opt_imgs and options and not is_image_option(options[0]):
         for i, opt in enumerate(options):
             opt_num = i + 1
             cleaned_text = to_persian_num(str(opt).strip())
             p_num = to_persian_num(opt_num)
-            opt_label = f"گزینه {p_num} - {cleaned_text}"
+            opt_label = f"{p_num} - {cleaned_text}"
 
             if opt_num == correct_opt and opt_num == user_opt:
                 msg_text += f"{RTL_MARK}🟢 {opt_label} (پاسخ درست شما)\n"
@@ -525,7 +527,6 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
     if nav_row:
         nav_keyboard.append(nav_row)
 
-    # چک کردن وجود تصویر سوال یا شبکه‌ای از تصاویر گزینه‌ها در مرور
     q_img = await find_question_image(exam_num, q_idx + 1)
     photo_to_send = None
     if q_img:

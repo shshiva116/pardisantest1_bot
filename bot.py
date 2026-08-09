@@ -25,8 +25,6 @@ PASSING_SCORE = 26
 EXAM_TIMEOUT_SECONDS = 20 * 60  # ۲۰ دقیقه زمان آزمون
 
 PERSIAN_DIGITS = {'1': '۱', '2': '۲', '3': '۳', '4': '۴', '5': '۵', '6': '۶', '7': '۷', '8': '۸', '9': '۹', '0': '۰'}
-
-# کاراکتر ویژه برای اجبار جهت متن از راست به چپ (RTL Mark)
 RTL_MARK = "\u200f"
 
 def to_persian_num(num):
@@ -158,7 +156,6 @@ async def find_option_images(exam_num, q_num):
     return None
 
 def is_image_option(opt):
-    """تشخیص اینکه گزینه فایل تصویری است یا متن"""
     text = str(opt).strip()
     return text.lower().endswith(('.jpg', '.jpeg', '.png'))
 
@@ -209,7 +206,6 @@ async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     row = []
     for i in range(1, 18):
-        # ساخت دکمه‌ها به‌صورت: گزینه ۱ - گزینه ۲ - ...
         row.append(InlineKeyboardButton(f"آزمون {to_persian_num(i)}", callback_data=f"select_exam_{i}"))
         if len(row) == 3:
             keyboard.append(row)
@@ -281,7 +277,6 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
 def build_question_keyboard(q_index, total_q, selected_opt=None):
     buttons = []
     opts_row = []
-    # دکمه‌ها به‌صورت دقیق: گزینه ۱ - گزینه ۲ - گزینه ۳ - گزینه ۴
     for i in range(1, 5):
         label = f"گزینه {to_persian_num(i)}"
         if selected_opt == i:
@@ -322,7 +317,6 @@ async def send_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE,
     opts = q_data.get('options', [])
     opt_imgs = await find_option_images(exam_num, q_idx + 1)
 
-    # اگر گزینه‌ها تصویر نداشتند، لیست متنی آنها نمایش داده می‌شود
     if not opt_imgs and opts and not is_image_option(opts[0]):
         for idx, opt in enumerate(opts):
             p_num = to_persian_num(idx + 1)
@@ -340,7 +334,10 @@ async def send_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE,
     chat_id = update.effective_chat.id
 
     if is_callback and update.callback_query:
-        await update.callback_query.message.delete()
+        try:
+            await update.callback_query.message.delete()
+        except Exception:
+            pass
 
     if photo_to_send:
         await context.bot.send_photo(chat_id=chat_id, photo=photo_to_send, caption=caption, reply_markup=reply_markup, parse_mode='Markdown')
@@ -363,7 +360,13 @@ async def handle_answer_and_nav(update: Update, context: ContextTypes.DEFAULT_TY
     if data.startswith("ans_"):
         opt = int(data.split("_")[1])
         exam['user_answers'][exam['current_index']] = opt
-        await send_exam_question(update, context, is_callback=True)
+        
+        # انتقال خودکار به سوال بعدی یا اتمام آزمون در صورت رسیدن به سوال آخر
+        if exam['current_index'] < len(exam['questions']) - 1:
+            exam['current_index'] += 1
+            await send_exam_question(update, context, is_callback=True)
+        else:
+            await finish_exam(update, context)
 
     elif data == "nav_next":
         if exam['current_index'] < len(exam['questions']) - 1:
@@ -453,7 +456,7 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     )
 
 # ---------------------------------------------------------
-# مرور سوالات با دکمه‌های قبلی/بعدی و پاک کردن پیام قبلی
+# مرور سوالات با دکمه‌های قبلی/بعدی و ارسال تصویر
 # ---------------------------------------------------------
 async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -483,9 +486,9 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
 
     msg_text = f"{RTL_MARK}🔍 **مرور سوال شماره {to_persian_num(q_idx + 1)} از {to_persian_num(total_q)}:**\n\n{RTL_MARK}{q_text_content}\n\n"
 
-    opt_imgs = await find_option_images(exam['exam_num'], q_idx + 1)
+    exam_num = exam['exam_num']
+    opt_imgs = await find_option_images(exam_num, q_idx + 1)
 
-    # مرور متنی فقط در صورت عدم وجود تصویر پاسخ‌ها
     if not opt_imgs and options and not is_image_option(options[0]):
         for i, opt in enumerate(options):
             opt_num = i + 1
@@ -502,7 +505,6 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
             else:
                 msg_text += f"{RTL_MARK}⚪️ {opt_label}\n"
     else:
-        # برای سوالات تصویری
         p_correct = to_persian_num(correct_opt)
         msg_text += f"{RTL_MARK}🟢 گزینه صحیح: گزینه {p_correct}\n"
         if user_opt:
@@ -523,12 +525,32 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
     if nav_row:
         nav_keyboard.append(nav_row)
 
-    sent_msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text=msg_text,
-        reply_markup=InlineKeyboardMarkup(nav_keyboard),
-        parse_mode='Markdown'
-    )
+    # چک کردن وجود تصویر سوال یا شبکه‌ای از تصاویر گزینه‌ها در مرور
+    q_img = await find_question_image(exam_num, q_idx + 1)
+    photo_to_send = None
+    if q_img:
+        photo_to_send = open(q_img, 'rb')
+    elif opt_imgs:
+        photo_to_send = create_2x2_grid(*opt_imgs)
+
+    if photo_to_send:
+        sent_msg = await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=photo_to_send,
+            caption=msg_text,
+            reply_markup=InlineKeyboardMarkup(nav_keyboard),
+            parse_mode='Markdown'
+        )
+        if hasattr(photo_to_send, 'close'):
+            photo_to_send.close()
+    else:
+        sent_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=msg_text,
+            reply_markup=InlineKeyboardMarkup(nav_keyboard),
+            parse_mode='Markdown'
+        )
+
     exam['last_review_msg_id'] = sent_msg.message_id
 
 # ---------------------------------------------------------

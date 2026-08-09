@@ -274,13 +274,12 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
 # ---------------------------------------------------------
 # نمایش سوال و ثبت پاسخ
 # ---------------------------------------------------------
-def build_question_keyboard(q_index, total_q, selected_opt=None):
+def build_question_keyboard(q_index, total_q):
     buttons = []
     opts_row = []
+    # حذف چک‌مارک سبز؛ دکمه‌ها ساده و یکدست نمایش داده می‌شوند
     for i in range(1, 5):
         label = f"گزینه {to_persian_num(i)}"
-        if selected_opt == i:
-            label = f"✅ {label}"
         opts_row.append(InlineKeyboardButton(label, callback_data=f"ans_{i}"))
     buttons.append(opts_row)
 
@@ -292,7 +291,6 @@ def build_question_keyboard(q_index, total_q, selected_opt=None):
     if nav_row:
         buttons.append(nav_row)
 
-    # تغییر متن دکمه به درخواست کاربر
     buttons.append([InlineKeyboardButton("🏁 پایان آزمون و مشاهده نتیجه", callback_data="finish_exam_now")])
     return InlineKeyboardMarkup(buttons)
 
@@ -308,7 +306,7 @@ async def send_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE,
     exam_num = exam['exam_num']
 
     selected_opt = exam['user_answers'].get(q_idx)
-    reply_markup = build_question_keyboard(q_idx, total_q, selected_opt)
+    reply_markup = build_question_keyboard(q_idx, total_q)
 
     caption = (
         f"{RTL_MARK}📋 **سوال {to_persian_num(q_idx + 1)} از {to_persian_num(total_q)}** (آزمون {to_persian_num(exam_num)})\n\n"
@@ -318,12 +316,16 @@ async def send_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE,
     opts = q_data.get('options', [])
     opt_imgs = await find_option_images(exam_num, q_idx + 1)
 
-    # حذف کلمه «گزینه» از نمایش متنی (فقط شماره - متن)
+    # اجبار کامل RTL برای تک تک گزینه‌های متنی
     if not opt_imgs and opts and not is_image_option(opts[0]):
         for idx, opt in enumerate(opts):
             p_num = to_persian_num(idx + 1)
             clean_text = to_persian_num(str(opt).strip())
             caption += f"{RTL_MARK}{p_num} - {clean_text}\n"
+
+    # اضافه کردن پاسخ انتخابی کاربر در انتهای متن
+    if selected_opt:
+        caption += f"\n{RTL_MARK}پاسخ انتخابی شما: گزینه {to_persian_num(selected_opt)}"
 
     q_img = await find_question_image(exam_num, q_idx + 1)
 
@@ -490,7 +492,6 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
     exam_num = exam['exam_num']
     opt_imgs = await find_option_images(exam_num, q_idx + 1)
 
-    # حذف کلمه «گزینه» از نمایش متنی در مرور سوالات
     if not opt_imgs and options and not is_image_option(options[0]):
         for i, opt in enumerate(options):
             opt_num = i + 1

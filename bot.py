@@ -155,9 +155,10 @@ async def find_option_images(exam_num, q_num):
     return None
 
 def clean_option_text(opt):
+    """بررسی تصویری بودن گزینه"""
     text = str(opt).strip()
     if text.lower().endswith(('.jpg', '.jpeg', '.png')):
-        return "تصویر گزینه"
+        return None  # متن نمایش داده نمی‌شود
     return text
 
 # ---------------------------------------------------------
@@ -199,7 +200,11 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     questions_data = load_questions()
     if not questions_data:
-        await update.message.reply_text("❌ فایل سوالات (questions.json) بارگذاری نشد.")
+        msg = "❌ فایل سوالات (questions.json) بارگذاری نشد."
+        if update.callback_query:
+            await update.callback_query.message.reply_text(msg)
+        else:
+            await update.message.reply_text(msg)
         return
 
     keyboard = []
@@ -213,7 +218,12 @@ async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(row)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("لطفاً شماره آزمون مورد نظر خود را انتخاب کنید:", reply_markup=reply_markup)
+    text = "لطفاً شماره آزمون مورد نظر خود را انتخاب کنید:"
+    
+    if update.callback_query:
+        await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup)
 
 async def exam_timer(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     await asyncio.sleep(EXAM_TIMEOUT_SECONDS)
@@ -226,7 +236,12 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
 
-    exam_num = int(query.data.split('_')[2])
+    data = query.data
+    if data == "start_new_exam_from_btn":
+        await show_exam_list(update, context)
+        return
+
+    exam_num = int(data.split('_')[2])
     persian_exam_num = to_persian_num(exam_num)
     questions_data = load_questions()
 
@@ -300,14 +315,18 @@ async def send_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     caption = (
         f"📋 **سوال {to_persian_num(q_idx + 1)} از {to_persian_num(total_q)}** (آزمون {to_persian_num(exam_num)})\n\n"
-        f"{q_data.get('question', '')}\n\n"
+        f"{q_data.get('question', '').strip()}\n\n"
     )
 
     opts = q_data.get('options', [])
     for idx, opt in enumerate(opts):
-        caption += f"{to_persian_num(idx + 1)}) {clean_option_text(opt)}\n"
+        cleaned_text = clean_option_text(opt)
+        p_num = to_persian_num(idx + 1)
+        if cleaned_text:
+            caption += f"گزینه {p_num} - {cleaned_text}\n"
+        else:
+            caption += f"گزینه {p_num}\n"
 
-    # بررسی وجود تصویر سوال یا گزینه‌ها
     q_img = await find_question_image(exam_num, q_idx + 1)
     opt_imgs = await find_option_images(exam_num, q_idx + 1)
 
@@ -407,6 +426,9 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     if row:
         grid_buttons.append(row)
 
+    # افزودن دکمه شروع آزمون جدید زیر جدول کارنامه
+    grid_buttons.append([InlineKeyboardButton("🔄 شروع آزمون جدید", callback_data="start_new_exam_from_btn")])
+
     passed = correct_count >= PASSING_SCORE
     update_user_stats(chat_id, passed)
 
@@ -463,17 +485,19 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
 
     for i, opt in enumerate(options):
         opt_num = i + 1
-        opt_str = clean_option_text(opt)
+        cleaned_text = clean_option_text(opt)
         p_num = to_persian_num(opt_num)
         
+        opt_label = f"گزینه {p_num} - {cleaned_text}" if cleaned_text else f"گزینه {p_num}"
+
         if opt_num == correct_opt and opt_num == user_opt:
-            msg_text += f"🟢 {p_num}. {opt_str} (پاسخ درست شما)\n"
+            msg_text += f"🟢 {opt_label} (پاسخ درست شما)\n"
         elif opt_num == correct_opt:
-            msg_text += f"🟢 {p_num}. {opt_str} (پاسخ صحیح)\n"
+            msg_text += f"🟢 {opt_label} (پاسخ صحیح)\n"
         elif opt_num == user_opt:
-            msg_text += f"🔴 {p_num}. {opt_str} (انتخاب اشتباه شما)\n"
+            msg_text += f"🔴 {opt_label} (انتخاب اشتباه شما)\n"
         else:
-            msg_text += f"⚪️ {p_num}. {opt_str}\n"
+            msg_text += f"⚪️ {opt_label}\n"
 
     nav_keyboard = []
     nav_row = []
@@ -503,6 +527,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(show_exam_list, pattern="^start_new_exam_from_btn$"))
     app.add_handler(CallbackQueryHandler(handle_exam_selection, pattern="^select_exam_"))
     app.add_handler(CallbackQueryHandler(handle_review_question, pattern="^review_q_"))
     app.add_handler(CallbackQueryHandler(handle_answer_and_nav, pattern="^(ans_|nav_|finish_exam_now)"))

@@ -62,7 +62,7 @@ def update_user_stats(user, passed: bool):
     stats = load_stats()
     str_id = str(user.id)
     
-    first_name = user.first_name or "بدون نام"
+    first_name = user.first_name or "کاربر"
     username = f"@{user.username}" if user.username else "بدون یوزرنیم"
 
     if str_id not in stats:
@@ -322,10 +322,13 @@ async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     user_lines = []
     for uid, udata in list(stats.items())[:30]:  # نمایش تا ۳۰ کاربر اخیر
-        name = udata.get('first_name', 'نامشخص')
+        name = udata.get('first_name', 'کاربر')
         uname = udata.get('username', 'بدون یوزرنیم')
         tot = udata.get('total', 0)
-        user_lines.append(f"• **{name}** ({uname}) | آیدی: `{uid}` | آزمون‌ها: {to_persian_num(tot)}")
+        
+        # لینک مستقیم به پروفایل کاربر بر اساس آیدی عددی
+        user_link = f"[{name}](tg://user?id={uid})"
+        user_lines.append(f"• {user_link} ({uname}) | آیدی: `{uid}` | آزمون‌ها: {to_persian_num(tot)}")
 
     user_list_str = "\n".join(user_lines) if user_lines else "هنوز کاربری آزمون را ثبت نکرده است."
 
@@ -335,7 +338,7 @@ async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"{RTL_MARK}📝 **تعداد کل آزمون‌های شرکت‌شده:** {to_persian_num(total_exams)}\n"
         f"{RTL_MARK}✅ **کل قبولی‌ها:** {to_persian_num(total_passed)}\n"
         f"{RTL_MARK}❌ **کل مردودی‌ها:** {to_persian_num(total_failed)}\n\n"
-        f"{RTL_MARK}📋 **لیست ۳۰ کاربر اخیر:**\n{user_list_str}"
+        f"{RTL_MARK}📋 **لیست کاربران اخیر (جهت ورود به پیوی روی نام کلیک کنید):**\n{user_list_str}"
     )
 
     await update.message.reply_text(msg, parse_mode='Markdown')

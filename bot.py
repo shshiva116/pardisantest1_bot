@@ -32,6 +32,11 @@ RTL_MARK = "\u200f"
 def to_persian_num(num):
     return ''.join(PERSIAN_DIGITS.get(char, char) for char in str(num))
 
+def escape_html(text):
+    if not text:
+        return ""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 # ---------------------------------------------------------
 # مدیریت داده‌ها و ذخیره کاربران
 # ---------------------------------------------------------
@@ -59,11 +64,12 @@ def save_stats(stats):
 
 def register_or_update_user(user, passed: bool = None):
     """ثبت یا به‌روزرسانی مشخصات کاربر به محض تعامل با ربات"""
+    if not user:
+        return
     stats = load_stats()
     str_id = str(user.id)
     
-    # حذف کاراکترهای مخرب Markdown از نام کاربر
-    first_name = (user.first_name or "کاربر").replace('[', '').replace(']', '').replace('*', '').replace('_', '')
+    first_name = user.first_name or "کاربر"
     username = f"@{user.username}" if user.username else "بدون یوزرنیم"
 
     if str_id not in stats:
@@ -110,14 +116,14 @@ async def send_join_channel_message(update: Update, context: ContextTypes.DEFAUL
     ])
     
     text = (
-        f"{RTL_MARK}⚠️ **برای استفاده از ربات، لطفاً ابتدا در کانال ما عضو شوید.**\n\n"
-        f"{RTL_MARK}پس از عضویت در کانال، روی دکمه **«بررسی عضویت 🔄»** کلیک کنید."
+        f"{RTL_MARK}⚠️ <b>برای استفاده از ربات، لطفاً ابتدا در کانال ما عضو شوید.</b>\n\n"
+        f"{RTL_MARK}پس از عضویت در کانال، روی دکمه <b>«بررسی عضویت 🔄»</b> کلیک کنید."
     )
     
     if update.callback_query:
-        await update.callback_query.message.reply_text(text, reply_markup=keyboard, parse_mode='Markdown')
+        await update.callback_query.message.reply_text(text, reply_markup=keyboard, parse_mode='HTML')
     else:
-        await update.message.reply_text(text, reply_markup=keyboard, parse_mode='Markdown')
+        await update.message.reply_text(text, reply_markup=keyboard, parse_mode='HTML')
 
 # ---------------------------------------------------------
 # ساخت شبکه تصویری ۲x۲
@@ -262,7 +268,6 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 )
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ثبت کاربر بلافاصله پس از ارسال دستور start/
     register_or_update_user(update.effective_user)
 
     if not await check_channel_membership(update, context):
@@ -273,7 +278,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, reply_markup=MAIN_KEYBOARD)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ثبت هر تعاملی از کاربر
     register_or_update_user(update.effective_user)
 
     if not await check_channel_membership(update, context):
@@ -305,12 +309,12 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = load_stats().get(user_id, {"total": 0, "passed": 0, "failed": 0})
     
     msg = (
-        f"{RTL_MARK}📊 **آمار کلی آزمون‌های شما:**\n\n"
+        f"{RTL_MARK}📊 <b>آمار کلی آزمون‌های شما:</b>\n\n"
         f"{RTL_MARK}🔹 تعداد کل آزمون‌های شرکت‌شده: {to_persian_num(stats['total'])}\n"
         f"{RTL_MARK}✅ تعداد قبول‌شده: {to_persian_num(stats['passed'])}\n"
         f"{RTL_MARK}❌ تعداد مردود‌شده: {to_persian_num(stats['failed'])}"
     )
-    await update.message.reply_text(msg, parse_mode='Markdown')
+    await update.message.reply_text(msg, parse_mode='HTML')
 
 # ---------------------------------------------------------
 # پنل مدیریت اختصاصی برای ادمین (/admin)
@@ -329,15 +333,15 @@ async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     total_failed = sum(u.get('failed', 0) for u in stats.values())
 
     header_msg = (
-        f"{RTL_MARK}📊 **پنل مدیریت ربات:**\n\n"
-        f"{RTL_MARK}👤 **تعداد کل کاربران ثبت‌شده:** {to_persian_num(total_users)}\n"
-        f"{RTL_MARK}📝 **تعداد کل آزمون‌های شرکت‌شده:** {to_persian_num(total_exams)}\n"
-        f"{RTL_MARK}✅ **کل قبولی‌ها:** {to_persian_num(total_passed)}\n"
-        f"{RTL_MARK}❌ **کل مردودی‌ها:** {to_persian_num(total_failed)}\n\n"
-        f"{RTL_MARK}📋 **لیست تمام کاربران:**\n"
+        f"{RTL_MARK}📊 <b>پنل مدیریت ربات:</b>\n\n"
+        f"{RTL_MARK}👤 <b>تعداد کل کاربران ثبت‌شده:</b> {to_persian_num(total_users)}\n"
+        f"{RTL_MARK}📝 <b>تعداد کل آزمون‌های شرکت‌شده:</b> {to_persian_num(total_exams)}\n"
+        f"{RTL_MARK}✅ <b>کل قبولی‌ها:</b> {to_persian_num(total_passed)}\n"
+        f"{RTL_MARK}❌ <b>کل مردودی‌ها:</b> {to_persian_num(total_failed)}\n\n"
+        f"{RTL_MARK}📋 <b>لیست کاربران:</b>\n"
     )
 
-    await update.message.reply_text(header_msg, parse_mode='Markdown')
+    await update.message.reply_text(header_msg, parse_mode='HTML')
 
     if not stats:
         await update.message.reply_text("هنوز هیچ کاربری ثبت نشده است.")
@@ -345,20 +349,21 @@ async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     user_lines = []
     for uid, udata in stats.items():
-        name = udata.get('first_name', 'کاربر')
-        uname = udata.get('username', 'بدون یوزرنیم')
+        raw_name = udata.get('first_name', 'کاربر')
+        clean_name = escape_html(raw_name)
+        uname = escape_html(udata.get('username', 'بدون یوزرنیم'))
         tot = udata.get('total', 0)
         
-        # لینک مستقیم به پیوی کاربر بدون نیاز به یوزرنیم
-        user_link = f"[{name}](tg://user?id={uid})"
-        user_lines.append(f"• {user_link} ({uname}) | آیدی: `{uid}` | آزمون‌ها: {to_persian_num(tot)}")
+        # لینک امن به پیوی تمام حساب‌ها (حتی بدون یوزرنیم) با HTML
+        user_link = f'<a href="tg://user?id={uid}">{clean_name}</a>'
+        user_lines.append(f"• {user_link} ({uname}) | آیدی: <code>{uid}</code> | آزمون‌ها: {to_persian_num(tot)}")
 
-    # دسته‌بندی خروجی به پیام‌های ۳۰ تایی جهت جلوگیری از خطای تلگرام
-    chunk_size = 30
+    # ارسال لیست در قالب پیام‌های ۲۰ تایی جهت جلوگیری از خطای تلگرام
+    chunk_size = 20
     for i in range(0, len(user_lines), chunk_size):
         chunk = user_lines[i:i + chunk_size]
         msg_text = "\n".join(chunk)
-        await update.message.reply_text(msg_text, parse_mode='Markdown')
+        await update.message.reply_text(msg_text, parse_mode='HTML')
 
 # ---------------------------------------------------------
 # انتخاب آزمون و تایمر
@@ -397,8 +402,8 @@ async def exam_timer(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     if exam and exam.get('active'):
         await context.bot.send_message(
             chat_id=chat_id, 
-            text=f"{RTL_MARK}⏱ **زمان ۲۰ دقیقه‌ای آزمون به پایان رسید!**\n{RTL_MARK}در حال صدور کارنامه...", 
-            parse_mode='Markdown'
+            text=f"{RTL_MARK}⏱ <b>زمان ۲۰ دقیقه‌ای آزمون به پایان رسید!</b>\n{RTL_MARK}در حال صدور کارنامه...", 
+            parse_mode='HTML'
         )
         await finish_exam_by_chat_id(context, chat_id)
 
@@ -486,8 +491,8 @@ async def send_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE,
     reply_markup = build_question_keyboard(q_idx, total_q)
 
     caption = (
-        f"{RTL_MARK}📋 **سوال {to_persian_num(q_idx + 1)} از {to_persian_num(total_q)}** (آزمون {to_persian_num(exam_num)})\n\n"
-        f"{RTL_MARK}{to_persian_num(q_data.get('question', '').strip())}\n\n"
+        f"{RTL_MARK}📋 <b>سوال {to_persian_num(q_idx + 1)} از {to_persian_num(total_q)}</b> (آزمون {to_persian_num(exam_num)})\n\n"
+        f"{RTL_MARK}{escape_html(to_persian_num(q_data.get('question', '').strip()))}\n\n"
     )
 
     opts = q_data.get('options', [])
@@ -496,7 +501,7 @@ async def send_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if not opt_imgs and opts and not is_image_option(opts[0]):
         for idx, opt in enumerate(opts):
             p_num = to_persian_num(idx + 1)
-            clean_text = to_persian_num(str(opt).strip())
+            clean_text = escape_html(to_persian_num(str(opt).strip()))
             caption += f"{RTL_MARK}{p_num} - {clean_text}\n"
 
     if selected_opt:
@@ -519,11 +524,11 @@ async def send_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE,
             pass
 
     if photo_to_send:
-        await context.bot.send_photo(chat_id=chat_id, photo=photo_to_send, caption=caption, reply_markup=reply_markup, parse_mode='Markdown')
+        await context.bot.send_photo(chat_id=chat_id, photo=photo_to_send, caption=caption, reply_markup=reply_markup, parse_mode='HTML')
         if hasattr(photo_to_send, 'close'):
             photo_to_send.close()
     else:
-        await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=reply_markup, parse_mode='Markdown')
+        await context.bot.send_message(chat_id=chat_id, text=caption, reply_markup=reply_markup, parse_mode='HTML')
 
 async def handle_answer_and_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -624,9 +629,9 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     status_text = "قبول شدید" if passed else "مردود شدید"
 
     report_card = (
-        f"{RTL_MARK}📝 **کارنامه آزمون شماره {to_persian_num(exam['exam_num'])}**\n"
+        f"{RTL_MARK}📝 <b>کارنامه آزمون شماره {to_persian_num(exam['exam_num'])}</b>\n"
         f"{RTL_MARK}━━━━━━━━━━━━━━━━━━\n"
-        f"{RTL_MARK}نتیجه آزمون: **{status_text}** {status_icon}\n\n"
+        f"{RTL_MARK}نتیجه آزمون: <b>{status_text}</b> {status_icon}\n\n"
         f"{RTL_MARK}✅ پاسخ‌های درست: {to_persian_num(correct_count)}\n"
         f"{RTL_MARK}❌ پاسخ‌های نادرست: {to_persian_num(wrong_count)}\n"
         f"{RTL_MARK}⚪️ بدون پاسخ: {to_persian_num(unanswered_count)}\n\n"
@@ -637,7 +642,7 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
         chat_id=chat_id,
         text=report_card,
         reply_markup=InlineKeyboardMarkup(grid_buttons),
-        parse_mode='Markdown'
+        parse_mode='HTML'
     )
 
 # ---------------------------------------------------------
@@ -668,12 +673,12 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
         except Exception:
             pass
 
-    q_text_content = to_persian_num(q.get('question', f"سوال شماره {q_idx + 1}").strip())
+    q_text_content = escape_html(to_persian_num(q.get('question', f"سوال شماره {q_idx + 1}").strip()))
     options = q.get('options', [])
     correct_opt = int(q.get('correct_option', 1))
     user_opt = exam['user_answers'].get(q_idx)
 
-    msg_text = f"{RTL_MARK}🔍 **مرور سوال شماره {to_persian_num(q_idx + 1)} از {to_persian_num(total_q)}:**\n\n{RTL_MARK}{q_text_content}\n\n"
+    msg_text = f"{RTL_MARK}🔍 <b>مرور سوال شماره {to_persian_num(q_idx + 1)} از {to_persian_num(total_q)}:</b>\n\n{RTL_MARK}{q_text_content}\n\n"
 
     exam_num = exam['exam_num']
     opt_imgs = await find_option_images(exam_num, q_idx + 1, options)
@@ -681,7 +686,7 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
     if not opt_imgs and options and not is_image_option(options[0]):
         for i, opt in enumerate(options):
             opt_num = i + 1
-            cleaned_text = to_persian_num(str(opt).strip())
+            cleaned_text = escape_html(to_persian_num(str(opt).strip()))
             p_num = to_persian_num(opt_num)
             opt_label = f"{p_num} - {cleaned_text}"
 
@@ -727,7 +732,7 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
             photo=photo_to_send,
             caption=msg_text,
             reply_markup=InlineKeyboardMarkup(nav_keyboard),
-            parse_mode='Markdown'
+            parse_mode='HTML'
         )
         if hasattr(photo_to_send, 'close'):
             photo_to_send.close()
@@ -736,7 +741,7 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
             chat_id=chat_id,
             text=msg_text,
             reply_markup=InlineKeyboardMarkup(nav_keyboard),
-            parse_mode='Markdown'
+            parse_mode='HTML'
         )
 
     exam['last_review_msg_id'] = sent_msg.message_id

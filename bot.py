@@ -18,7 +18,8 @@ from telegram.ext import (
 # تنظیمات اصلی
 # ---------------------------------------------------------
 TOKEN = os.environ.get('TOKEN')
-CHANNEL_ID = "@ds_pardisan"  # آیدی کانال شما (حتماً ربات باید در کانال ادمین باشد)
+CHANNEL_ID = "@ds_pardisan"  # آیدی کانال (ربات باید در کانال ادمین باشد)
+ADMIN_ID = 67943468           # آیدی عددی مدیر اصلی ربات
 QUESTIONS_FILE = 'questions.json'
 STATS_FILE = 'user_stats.json'
 IMAGES_DIR = 'images/'
@@ -32,7 +33,7 @@ def to_persian_num(num):
     return ''.join(PERSIAN_DIGITS.get(char, char) for char in str(num))
 
 # ---------------------------------------------------------
-# مدیریت داده‌ها
+# مدیریت داده‌ها و ذخیره کاربران
 # ---------------------------------------------------------
 def load_questions():
     if os.path.exists(QUESTIONS_FILE):
@@ -56,12 +57,26 @@ def save_stats(stats):
     with open(STATS_FILE, 'w', encoding='utf-8') as f:
         json.dump(stats, f, ensure_ascii=False, indent=2)
 
-def update_user_stats(user_id, passed: bool):
+def update_user_stats(user, passed: bool):
+    """ذخیره و به‌روزرسانی آمار و اطلاعات کاربر در فایل json"""
     stats = load_stats()
-    str_id = str(user_id)
-    if str_id not in stats:
-        stats[str_id] = {"total": 0, "passed": 0, "failed": 0}
+    str_id = str(user.id)
     
+    first_name = user.first_name or "بدون نام"
+    username = f"@{user.username}" if user.username else "بدون یوزرنیم"
+
+    if str_id not in stats:
+        stats[str_id] = {
+            "first_name": first_name,
+            "username": username,
+            "total": 0,
+            "passed": 0,
+            "failed": 0
+        }
+    else:
+        stats[str_id]["first_name"] = first_name
+        stats[str_id]["username"] = username
+
     stats[str_id]["total"] += 1
     if passed:
         stats[str_id]["passed"] += 1
@@ -74,22 +89,18 @@ def update_user_stats(user_id, passed: bool):
 # بررسی عضویت در کانال (قفل کانال)
 # ---------------------------------------------------------
 async def check_channel_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """بررسی می‌کند که آیا کاربر در کانال عضو است یا خیر."""
     user_id = update.effective_user.id
     try:
         member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        # وضعیت‌های مجاز: عضو، مدیر، سازنده کانال
         if member.status in ['member', 'administrator', 'creator']:
             return True
     except Exception as e:
-        # در صورتی که ربات ادمین کانال نباشد یا آیدی اشتباه باشد این خطا رخ می‌دهد
         print(f"خطا در بررسی عضویت کانال: {e}")
-        return True  # برای جلوگیری از قفل شدن کامل ربات در صورت خطای ادمین نبودن
+        return True
     
     return False
 
 async def send_join_channel_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """پیام لزوم عضویت در کانال را ارسال می‌کند."""
     channel_username = CHANNEL_ID.replace("@", "")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 عضویت در کانال", url=f"https://t.me/{channel_username}")],
@@ -291,6 +302,42 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{RTL_MARK}✅ تعداد قبول‌شده: {to_persian_num(stats['passed'])}\n"
         f"{RTL_MARK}❌ تعداد مردود‌شده: {to_persian_num(stats['failed'])}"
     )
+    await update.message.reply_text(msg, parse_mode='Markdown')
+
+# ---------------------------------------------------------
+# پنل مدیریت اختصاصی برای ادمین (/admin)
+# ---------------------------------------------------------
+async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        return
+
+    stats = load_stats()
+    total_users = len(stats)
+    
+    total_exams = sum(u.get('total', 0) for u in stats.values())
+    total_passed = sum(u.get('passed', 0) for u in stats.values())
+    total_failed = sum(u.get('failed', 0) for u in stats.values())
+
+    user_lines = []
+    for uid, udata in list(stats.items())[:30]:  # نمایش تا ۳۰ کاربر اخیر
+        name = udata.get('first_name', 'نامشخص')
+        uname = udata.get('username', 'بدون یوزرنیم')
+        tot = udata.get('total', 0)
+        user_lines.append(f"• **{name}** ({uname}) | آیدی: `{uid}` | آزمون‌ها: {to_persian_num(tot)}")
+
+    user_list_str = "\n".join(user_lines) if user_lines else "هنوز کاربری آزمون را ثبت نکرده است."
+
+    msg = (
+        f"{RTL_MARK}📊 **پنل مدیریت ربات:**\n\n"
+        f"{RTL_MARK}👤 **تعداد کل کاربران:** {to_persian_num(total_users)}\n"
+        f"{RTL_MARK}📝 **تعداد کل آزمون‌های شرکت‌شده:** {to_persian_num(total_exams)}\n"
+        f"{RTL_MARK}✅ **کل قبولی‌ها:** {to_persian_num(total_passed)}\n"
+        f"{RTL_MARK}❌ **کل مردودی‌ها:** {to_persian_num(total_failed)}\n\n"
+        f"{RTL_MARK}📋 **لیست ۳۰ کاربر اخیر:**\n{user_list_str}"
+    )
+
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 # ---------------------------------------------------------
@@ -501,9 +548,10 @@ async def handle_answer_and_nav(update: Update, context: ContextTypes.DEFAULT_TY
 # ---------------------------------------------------------
 async def finish_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
-    await finish_exam_by_chat_id(context, chat_id)
+    user = update.effective_user if update else None
+    await finish_exam_by_chat_id(context, chat_id, user)
 
-async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user=None):
     exam = context.user_data.get('exam')
     if not exam or not exam.get('active'):
         return
@@ -548,7 +596,10 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     grid_buttons.append([InlineKeyboardButton("🔄 شروع آزمون جدید", callback_data="start_new_exam_from_btn")])
 
     passed = correct_count >= PASSING_SCORE
-    update_user_stats(chat_id, passed)
+    
+    # به‌روزرسانی آمار و مشخصات کاربر
+    if user:
+        update_user_stats(user, passed)
 
     status_icon = "🎉" if passed else "❌"
     status_text = "قبول شدید" if passed else "مردود شدید"
@@ -680,7 +731,9 @@ def main():
 
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # ثبت دستورات و هاندلرها
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("admin", admin_stats_command))  # پنل ادمین
     app.add_handler(CallbackQueryHandler(handle_check_join_callback, pattern="^check_join_status$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(show_exam_list, pattern="^start_new_exam_from_btn$"))

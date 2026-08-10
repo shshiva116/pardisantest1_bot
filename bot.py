@@ -18,6 +18,7 @@ from telegram.ext import (
 # تنظیمات اصلی
 # ---------------------------------------------------------
 TOKEN = os.environ.get('TOKEN')
+CHANNEL_ID = "@ds_pardisan"  # آیدی کانال شما (حتماً ربات باید در کانال ادمین باشد)
 QUESTIONS_FILE = 'questions.json'
 STATS_FILE = 'user_stats.json'
 IMAGES_DIR = 'images/'
@@ -70,6 +71,42 @@ def update_user_stats(user_id, passed: bool):
     save_stats(stats)
 
 # ---------------------------------------------------------
+# بررسی عضویت در کانال (قفل کانال)
+# ---------------------------------------------------------
+async def check_channel_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """بررسی می‌کند که آیا کاربر در کانال عضو است یا خیر."""
+    user_id = update.effective_user.id
+    try:
+        member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        # وضعیت‌های مجاز: عضو، مدیر، سازنده کانال
+        if member.status in ['member', 'administrator', 'creator']:
+            return True
+    except Exception as e:
+        # در صورتی که ربات ادمین کانال نباشد یا آیدی اشتباه باشد این خطا رخ می‌دهد
+        print(f"خطا در بررسی عضویت کانال: {e}")
+        return True  # برای جلوگیری از قفل شدن کامل ربات در صورت خطای ادمین نبودن
+    
+    return False
+
+async def send_join_channel_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """پیام لزوم عضویت در کانال را ارسال می‌کند."""
+    channel_username = CHANNEL_ID.replace("@", "")
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 عضویت در کانال", url=f"https://t.me/{channel_username}")],
+        [InlineKeyboardButton("🔄 بررسی عضویت", callback_data="check_join_status")]
+    ])
+    
+    text = (
+        f"{RTL_MARK}⚠️ **برای استفاده از ربات، لطفاً ابتدا در کانال ما عضو شوید.**\n\n"
+        f"{RTL_MARK}پس از عضویت در کانال، روی دکمه **«بررسی عضویت 🔄»** کلیک کنید."
+    )
+    
+    if update.callback_query:
+        await update.callback_query.message.reply_text(text, reply_markup=keyboard, parse_mode='Markdown')
+    else:
+        await update.message.reply_text(text, reply_markup=keyboard, parse_mode='Markdown')
+
+# ---------------------------------------------------------
 # ساخت شبکه تصویری ۲x۲
 # ---------------------------------------------------------
 def draw_digit_vector(draw, digit, left, top, size=60, color=(0, 0, 0), stroke=8):
@@ -90,7 +127,16 @@ def draw_digit_vector(draw, digit, left, top, size=60, color=(0, 0, 0), stroke=8
         draw.line([(r - w/4, b), (r - w/4, t), (l, cy), (r, cy)], fill=color, width=stroke)
 
 def create_2x2_grid(img1_path, img2_path, img3_path, img4_path):
-    imgs = [Image.open(p).convert("RGB") for p in [img1_path, img2_path, img3_path, img4_path]]
+    imgs = []
+    for p in [img1_path, img2_path, img3_path, img4_path]:
+        with Image.open(p) as im:
+            if im.mode in ('RGBA', 'LA') or (im.mode == 'P' and 'transparency' in im.info):
+                bg = Image.new("RGB", im.size, (255, 255, 255))
+                bg.paste(im, mask=im.convert('RGBA').split()[3])
+                imgs.append(bg)
+            else:
+                imgs.append(im.convert("RGB"))
+
     target_w = max(img.width for img in imgs)
     target_h = max(img.height for img in imgs)
 
@@ -123,10 +169,9 @@ def create_2x2_grid(img1_path, img2_path, img3_path, img4_path):
     return buf
 
 # ---------------------------------------------------------
-# جستجوی هوشمند و انعطاف‌پذیر تصاویر
+# جستجوی فایل‌ها
 # ---------------------------------------------------------
 def find_file_case_insensitive(base_path):
-    """بررسی وجود فایل بدون حساسیت به پسوند و بزرگ/کوچک بودن حروف"""
     if os.path.exists(base_path):
         return base_path
     
@@ -153,7 +198,6 @@ async def find_question_image(exam_num, q_num):
     return None
 
 async def find_option_images(exam_num, q_num, options=None):
-    # ۱. چک کردن نام فایل‌های مستقیماً ذکر شده در JSON
     if options and len(options) == 4 and is_image_option(options[0]):
         paths = []
         for opt in options:
@@ -167,7 +211,6 @@ async def find_option_images(exam_num, q_num, options=None):
         if len(paths) == 4:
             return paths
 
-    # ۲. جستجوی خودکار الگوی نام‌گذاری در صورتی که در JSON نام عکس نیامده باشد
     paths = []
     extensions = ['.jpg', '.png', '.jpeg', '.JPG', '.PNG', '.JPEG']
     for opt_num in range(1, 5):
@@ -198,7 +241,7 @@ def is_image_option(opt):
     return text.endswith(('.jpg', '.jpeg', '.png', '.webp'))
 
 # ---------------------------------------------------------
-# کیبورد اصلی و دستورات پایه
+# کیبورد اصلی و دستورات
 # ---------------------------------------------------------
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [['شروع آزمون آیین‌نامه 🚗'], ['آمار من 📊']],
@@ -206,15 +249,37 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 )
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_channel_membership(update, context):
+        await send_join_channel_message(update, context)
+        return
+
     text = f"{RTL_MARK}به ربات آزمون آیین‌نامه خوش آمدید!\n{RTL_MARK}برای شروع آزمون یا مشاهده آمار کلی، از دکمه‌های زیر استفاده کنید."
     await update.message.reply_text(text, reply_markup=MAIN_KEYBOARD)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_channel_membership(update, context):
+        await send_join_channel_message(update, context)
+        return
+
     text = update.message.text
     if text == 'شروع آزمون آیین‌نامه 🚗':
         await show_exam_list(update, context)
     elif text == 'آمار من 📊':
         await show_stats(update, context)
+
+async def handle_check_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if await check_channel_membership(update, context):
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        text = f"{RTL_MARK}✅ عضویت شما تایید شد!\n{RTL_MARK}اکنون می‌توانید از ربات استفاده کنید."
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=MAIN_KEYBOARD)
+    else:
+        await query.message.reply_text(f"{RTL_MARK}❌ شما هنوز در کانال عضو نشده‌اید! لطفاً ابتدا عضو شوید.")
 
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -268,12 +333,15 @@ async def exam_timer(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
             text=f"{RTL_MARK}⏱ **زمان ۲۰ دقیقه‌ای آزمون به پایان رسید!**\n{RTL_MARK}در حال صدور کارنامه...", 
             parse_mode='Markdown'
         )
-        # پایان خودکار آزمون و صدور کارنامه
         await finish_exam_by_chat_id(context, chat_id)
 
 async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    if not await check_channel_membership(update, context):
+        await send_join_channel_message(update, context)
+        return
 
     data = query.data
     if data == "start_new_exam_from_btn":
@@ -315,7 +383,7 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
     await send_exam_question(update, context)
 
 # ---------------------------------------------------------
-# نمایش سوال و ثبت پاسخ
+# نمایش سوال و پاسخ
 # ---------------------------------------------------------
 def build_question_keyboard(q_index, total_q):
     buttons = []
@@ -394,6 +462,10 @@ async def handle_answer_and_nav(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
 
+    if not await check_channel_membership(update, context):
+        await send_join_channel_message(update, context)
+        return
+
     exam = context.user_data.get('exam')
     if not exam or not exam.get('active'):
         await query.message.reply_text(f"{RTL_MARK}آزمون در حال حاضر فعال نیست.")
@@ -425,7 +497,7 @@ async def handle_answer_and_nav(update: Update, context: ContextTypes.DEFAULT_TY
         await finish_exam(update, context)
 
 # ---------------------------------------------------------
-# پایان آزمون و نمایش کارنامه
+# پایان آزمون
 # ---------------------------------------------------------
 async def finish_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
@@ -499,11 +571,15 @@ async def finish_exam_by_chat_id(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     )
 
 # ---------------------------------------------------------
-# مرور سوالات با دکمه‌های قبلی/بعدی و ارسال تصویر
+# مرور سوالات
 # ---------------------------------------------------------
 async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    if not await check_channel_membership(update, context):
+        await send_join_channel_message(update, context)
+        return
 
     exam = context.user_data.get('exam')
     if not exam:
@@ -605,6 +681,7 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CallbackQueryHandler(handle_check_join_callback, pattern="^check_join_status$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(show_exam_list, pattern="^start_new_exam_from_btn$"))
     app.add_handler(CallbackQueryHandler(handle_exam_selection, pattern="^select_exam_"))

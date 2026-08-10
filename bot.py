@@ -123,41 +123,79 @@ def create_2x2_grid(img1_path, img2_path, img3_path, img4_path):
     return buf
 
 # ---------------------------------------------------------
-# جستجوی هوشمند تصاویر
+# جستجوی هوشمند و انعطاف‌پذیر تصاویر
 # ---------------------------------------------------------
-async def find_question_image(exam_num, q_num):
-    candidates = [
-        os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}.jpg"),
-        os.path.join(IMAGES_DIR, f"E{exam_num}_q{q_num}.jpg"),
-        os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}.png"),
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            return path
+def find_file_case_insensitive(base_path):
+    """بررسی وجود فایل بدون حساسیت به پسوند و بزرگ/کوچک بودن حروف"""
+    if os.path.exists(base_path):
+        return base_path
+    
+    dir_name, file_name = os.path.split(base_path)
+    if not os.path.exists(dir_name):
+        return None
+        
+    file_name_lower = file_name.lower()
+    for f in os.listdir(dir_name):
+        if f.lower() == file_name_lower:
+            return os.path.join(dir_name, f)
     return None
 
-async def find_option_images(exam_num, q_num):
-    paths = []
-    for opt_num in range(1, 5):
-        candidates = [
-            os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}_opt{opt_num}.jpg"),
-            os.path.join(IMAGES_DIR, f"E{exam_num}_q{q_num}_opt{opt_num}.jpg"),
-            os.path.join(IMAGES_DIR, f"e{exam_num}_q{q_num}_{opt_num}.jpg"),
-        ]
-        found = None
-        for path in candidates:
-            if os.path.exists(path):
-                found = path
+async def find_question_image(exam_num, q_num):
+    extensions = ['.jpg', '.png', '.jpeg', '.JPG', '.PNG', '.JPEG']
+    prefixes = [f"e{exam_num}_q{q_num}", f"E{exam_num}_q{q_num}"]
+    
+    for prefix in prefixes:
+        for ext in extensions:
+            path = os.path.join(IMAGES_DIR, prefix + ext)
+            found = find_file_case_insensitive(path)
+            if found:
+                return found
+    return None
+
+async def find_option_images(exam_num, q_num, options=None):
+    # ۱. چک کردن نام فایل‌های مستقیماً ذکر شده در JSON
+    if options and len(options) == 4 and is_image_option(options[0]):
+        paths = []
+        for opt in options:
+            opt_str = str(opt).strip()
+            path = os.path.join(IMAGES_DIR, opt_str)
+            found = find_file_case_insensitive(path)
+            if found:
+                paths.append(found)
+            else:
                 break
-        paths.append(found)
+        if len(paths) == 4:
+            return paths
+
+    # ۲. جستجوی خودکار الگوی نام‌گذاری در صورتی که در JSON نام عکس نیامده باشد
+    paths = []
+    extensions = ['.jpg', '.png', '.jpeg', '.JPG', '.PNG', '.JPEG']
+    for opt_num in range(1, 5):
+        found_opt = None
+        candidates = [
+            f"e{exam_num}_q{q_num}_opt{opt_num}",
+            f"E{exam_num}_q{q_num}_opt{opt_num}",
+            f"e{exam_num}_q{q_num}_{opt_num}",
+            f"E{exam_num}_q{q_num}_{opt_num}"
+        ]
+        for cand in candidates:
+            for ext in extensions:
+                p = os.path.join(IMAGES_DIR, cand + ext)
+                res = find_file_case_insensitive(p)
+                if res:
+                    found_opt = res
+                    break
+            if found_opt:
+                break
+        paths.append(found_opt)
     
     if all(p is not None for p in paths):
         return paths
     return None
 
 def is_image_option(opt):
-    text = str(opt).strip()
-    return text.lower().endswith(('.jpg', '.jpeg', '.png'))
+    text = str(opt).strip().lower()
+    return text.endswith(('.jpg', '.jpeg', '.png', '.webp'))
 
 # ---------------------------------------------------------
 # کیبورد اصلی و دستورات پایه
@@ -191,7 +229,7 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 # ---------------------------------------------------------
-# انتخاب آزمون و شروع
+# انتخاب آزمون و تایمر
 # ---------------------------------------------------------
 async def show_exam_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     questions_data = load_questions()
@@ -225,7 +263,12 @@ async def exam_timer(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     await asyncio.sleep(EXAM_TIMEOUT_SECONDS)
     exam = context.user_data.get('exam')
     if exam and exam.get('active'):
-        await context.bot.send_message(chat_id=chat_id, text=f"{RTL_MARK}⏱ **زمان ۲۰ دقیقه‌ای آزمون به پایان رسید!**", parse_mode='Markdown')
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text=f"{RTL_MARK}⏱ **زمان ۲۰ دقیقه‌ای آزمون به پایان رسید!**\n{RTL_MARK}در حال صدور کارنامه...", 
+            parse_mode='Markdown'
+        )
+        # پایان خودکار آزمون و صدور کارنامه
         await finish_exam_by_chat_id(context, chat_id)
 
 async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -277,7 +320,6 @@ async def handle_exam_selection(update: Update, context: ContextTypes.DEFAULT_TY
 def build_question_keyboard(q_index, total_q):
     buttons = []
     opts_row = []
-    # حذف چک‌مارک سبز؛ دکمه‌ها ساده و یکدست نمایش داده می‌شوند
     for i in range(1, 5):
         label = f"گزینه {to_persian_num(i)}"
         opts_row.append(InlineKeyboardButton(label, callback_data=f"ans_{i}"))
@@ -314,16 +356,14 @@ async def send_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE,
     )
 
     opts = q_data.get('options', [])
-    opt_imgs = await find_option_images(exam_num, q_idx + 1)
+    opt_imgs = await find_option_images(exam_num, q_idx + 1, opts)
 
-    # اجبار کامل RTL برای تک تک گزینه‌های متنی
     if not opt_imgs and opts and not is_image_option(opts[0]):
         for idx, opt in enumerate(opts):
             p_num = to_persian_num(idx + 1)
             clean_text = to_persian_num(str(opt).strip())
             caption += f"{RTL_MARK}{p_num} - {clean_text}\n"
 
-    # اضافه کردن پاسخ انتخابی کاربر در انتهای متن
     if selected_opt:
         caption += f"\n{RTL_MARK}پاسخ انتخابی شما: گزینه {to_persian_num(selected_opt)}"
 
@@ -490,7 +530,7 @@ async def handle_review_question(update: Update, context: ContextTypes.DEFAULT_T
     msg_text = f"{RTL_MARK}🔍 **مرور سوال شماره {to_persian_num(q_idx + 1)} از {to_persian_num(total_q)}:**\n\n{RTL_MARK}{q_text_content}\n\n"
 
     exam_num = exam['exam_num']
-    opt_imgs = await find_option_images(exam_num, q_idx + 1)
+    opt_imgs = await find_option_images(exam_num, q_idx + 1, options)
 
     if not opt_imgs and options and not is_image_option(options[0]):
         for i, opt in enumerate(options):
